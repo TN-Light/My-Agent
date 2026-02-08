@@ -208,6 +208,37 @@ class ExecutionEngine:
         except Exception as e:
             logger.warning(f"Phase-E initialization failed: {e}")
         
+        # Phase-C: Entry Logic Engine
+        self.entry_logic = None
+        self.risk_budget = None
+        self.trade_tracker = None
+        try:
+            from logic.entry_logic_engine import EntryLogicEngine
+            # Try to wire RiskBudgetEngine for position sizing
+            risk_engine = None
+            try:
+                from logic.risk_budget_engine import RiskBudgetEngine
+                equity = self.config.get("account_equity", 1000000.0)
+                mode = self.config.get("trading_mode", "SWING")
+                risk_engine = RiskBudgetEngine(account_equity=equity, mode=mode)
+                self.risk_budget = risk_engine
+            except Exception as risk_err:
+                logger.warning(f"Phase-C: RiskBudgetEngine unavailable: {risk_err}")
+            
+            self.entry_logic = EntryLogicEngine(risk_budget_engine=risk_engine)
+            
+            # Wire TradeLifecycleTracker (Phase-8A) — previously dead code
+            try:
+                from logic.trade_lifecycle import TradeLifecycleTracker
+                self.trade_tracker = TradeLifecycleTracker()
+                logger.info("Phase-C: TradeLifecycleTracker activated")
+            except Exception as tlc_err:
+                logger.warning(f"Phase-C: TradeLifecycleTracker unavailable: {tlc_err}")
+            
+            logger.info("Phase-C: Entry Logic Engine initialized")
+        except Exception as e:
+            logger.warning(f"Phase-C initialization failed: {e}")
+        
         # Phase-2B: TradingView client (singleton per agent lifetime)
         self.tradingview_client = None
         
@@ -1034,6 +1065,29 @@ class ExecutionEngine:
                     logger.info(f"[SCANNER] {symbol} → {signal.signal_status.value}")
                 except Exception as signal_err:
                     logger.warning(f"[SCANNER] {symbol} signal evaluation failed: {signal_err}")
+            
+            # Phase-C: Generate entry setup for scanner results
+            if self.entry_logic and signal and signal.signal_status.value == "ELIGIBLE":
+                try:
+                    setup = self.entry_logic.generate_setup(
+                        signal=signal,
+                        symbol=symbol,
+                        current_price=current_price,
+                        monthly_support=monthly_support,
+                        monthly_resistance=monthly_resistance,
+                        weekly_support=weekly_support,
+                        weekly_resistance=weekly_resistance,
+                        scenario_probabilities=probability_result["scenario_probabilities"] if probability_result else {},
+                        alignment=alignment,
+                        is_unstable=is_unstable,
+                        regime=regime_ctx.regime.value if (self.regime_detector and regime_ctx) else "",
+                        account_equity=self.config.get("account_equity", 0),
+                        mode=self.config.get("trading_mode", "SWING")
+                    )
+                    if setup:
+                        logger.info(f"[SCANNER] {symbol}: Entry setup → {setup.direction} @ {setup.entry_price:.2f}, stop {setup.stop_loss:.2f}, R:R {setup.risk_reward_t1:.1f}")
+                except Exception as entry_err:
+                    logger.warning(f"[SCANNER] {symbol} entry logic failed: {entry_err}")
             
             return signal
             
@@ -2048,6 +2102,71 @@ class ExecutionEngine:
                             
                             # Always log to console
                             print(signal_display)
+                            
+                            # Phase-C: Generate entry setup if signal is eligible
+                            if self.entry_logic and signal.signal_status.value == "ELIGIBLE":
+                                try:
+                                    setup = self.entry_logic.generate_setup(
+                                        signal=signal,
+                                        symbol=symbol,
+                                        current_price=current_price,
+                                        monthly_support=monthly_support,
+                                        monthly_resistance=monthly_resistance,
+                                        weekly_support=weekly_support,
+                                        weekly_resistance=weekly_resistance,
+                                        scenario_probabilities=probability_result["scenario_probabilities"] if probability_result else {},
+                                        alignment=alignment,
+                                        is_unstable=is_unstable,
+                                        regime=mtf_regime_context.regime.value if mtf_regime_context else "",
+                                        account_equity=self.config.get("account_equity", 0),
+                                        mode=self.config.get("trading_mode", "SWING")
+                                    )
+                                    
+                                    if setup:
+                                        # Display the trade setup plan
+                                        setup_display = self.entry_logic.format_setup(setup)
+                                        try:
+                                            self.chat_ui.log("", "INFO")
+                                            for line in setup_display.split('\n'):
+                                                if "TRADE SETUP PLAN" in line or "═" in line:
+                                                    self.chat_ui.log(line, "SUCCESS")
+                                                elif "⚠" in line:
+                                                    self.chat_ui.log(line, "WARNING")
+                                                elif "───" in line:
+                                                    self.chat_ui.log(line, "INFO")
+                                                else:
+                                                    self.chat_ui.log(line, "INFO")
+                                        except Exception as ui_err:
+                                            logger.warning(f"Phase-C UI display failed: {ui_err}")
+                                        print(setup_display)
+                                        
+                                        # Record in TradeLifecycleTracker if available
+                                        if self.trade_tracker and setup.risk_budget_approved:
+                                            try:
+                                                import uuid
+                                                trade_id = f"{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+                                                self.trade_tracker.create_trade(
+                                                    trade_id=trade_id,
+                                                    symbol=symbol,
+                                                    timeframe="MTF",
+                                                    market_mode=self.config.get("trading_mode", "SWING"),
+                                                    scenario=setup.active_scenario,
+                                                    probability=setup.scenario_probability,
+                                                    alignment_state=setup.alignment_state,
+                                                    htf_support=setup.stop_loss,
+                                                    htf_resistance=setup.target_1,
+                                                    htf_direction=setup.direction,
+                                                    entry_price=setup.entry_price,
+                                                    entry_time=setup.setup_time,
+                                                    direction=setup.direction
+                                                )
+                                                logger.info(f"Phase-C: Trade {trade_id} recorded in lifecycle tracker")
+                                            except Exception as track_err:
+                                                logger.warning(f"Phase-C: Trade tracking failed: {track_err}")
+                                    else:
+                                        logger.info(f"Phase-C: {symbol} — no setup generated (criteria not met)")
+                                except Exception as entry_err:
+                                    logger.warning(f"Phase-C entry logic failed: {entry_err}")
                             
                         except Exception as signal_err:
                             logger.error(f"Phase-11 signal evaluation failed: {signal_err}", exc_info=True)
