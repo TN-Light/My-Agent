@@ -276,10 +276,195 @@ class TradingViewClient:
                     except Exception:
                         pass
                 
+                # ─── Phase-D: Deep JavaScript Extraction ──────────────────
+                # Extract data from TradingView's internal chart widget via JS evaluation.
+                # This bypasses VLM for numeric data that VLMs read poorly.
+                try:
+                    deep_data = page.evaluate("""() => {
+                        const result = {
+                            indicators_deep: {},
+                            candles: [],
+                            technicals_rating: null,
+                            price_scale: null,
+                            all_studies: []
+                        };
+                        
+                        // Method 1: Extract from TradingView's legend values (more reliable selectors)
+                        try {
+                            const legendValues = document.querySelectorAll('[class*="legendWrapper"] [class*="value"]');
+                            if (legendValues.length > 0) {
+                                result.indicators_deep['legend_value_count'] = legendValues.length;
+                            }
+                        } catch(e) {}
+                        
+                        // Method 2: Extract ALL legend source items with their values
+                        try {
+                            const sources = document.querySelectorAll("div[data-name='legend-source-item']");
+                            for (const src of sources) {
+                                const titleEl = src.querySelector("[class*='title']");
+                                const valEls = src.querySelectorAll("[class*='value']");
+                                if (titleEl) {
+                                    const title = titleEl.textContent.trim();
+                                    const vals = Array.from(valEls).map(v => v.textContent.trim()).filter(v => v);
+                                    if (vals.length > 0) {
+                                        result.all_studies.push({
+                                            name: title,
+                                            values: vals
+                                        });
+                                    }
+                                }
+                            }
+                        } catch(e) {}
+                        
+                        // Method 3: Extract study values via the indicator panel
+                        try {
+                            // Bollinger Bands
+                            const allText = document.body.innerText;
+                            const bbMatch = allText.match(/BB\\s*\\((\\d+)[^)]*\\)[^\\d]*(\\d[\\d,.]+).*?(\\d[\\d,.]+).*?(\\d[\\d,.]+)/i);
+                            if (bbMatch) {
+                                result.indicators_deep['BB_period'] = bbMatch[1];
+                                result.indicators_deep['BB_upper'] = bbMatch[2].replace(/,/g, '');
+                                result.indicators_deep['BB_middle'] = bbMatch[3].replace(/,/g, '');
+                                result.indicators_deep['BB_lower'] = bbMatch[4].replace(/,/g, '');
+                            }
+                            
+                            // Stochastic
+                            const stochMatch = allText.match(/Stoch(?:astic)?\\s*\\(([^)]+)\\)[^\\d]*(\\d+\\.?\\d*)[^\\d]*(\\d+\\.?\\d*)/i);
+                            if (stochMatch) {
+                                result.indicators_deep['Stoch_K'] = stochMatch[2];
+                                result.indicators_deep['Stoch_D'] = stochMatch[3];
+                            }
+                            
+                            // VWAP
+                            const vwapMatch = allText.match(/VWAP[^\\d]*(\\d[\\d,.]+\\.?\\d*)/i);
+                            if (vwapMatch) {
+                                result.indicators_deep['VWAP'] = vwapMatch[1].replace(/,/g, '');
+                            }
+                            
+                            // Supertrend
+                            const stMatch = allText.match(/Supertrend[^\\d]*(\\d[\\d,.]+\\.?\\d*)/i);
+                            if (stMatch) {
+                                result.indicators_deep['Supertrend'] = stMatch[1].replace(/,/g, '');
+                            }
+                            
+                            // ADX
+                            const adxMatch = allText.match(/ADX[^\\d]*(\\d+\\.?\\d*)/i);
+                            if (adxMatch) {
+                                result.indicators_deep['ADX'] = adxMatch[1];
+                            }
+                            
+                            // ATR
+                            const atrMatch = allText.match(/ATR[^\\d]*(\\d[\\d,.]*\\.?\\d*)/i);
+                            if (atrMatch) {
+                                result.indicators_deep['ATR'] = atrMatch[1].replace(/,/g, '');
+                            }
+                        } catch(e) {}
+                        
+                        // Method 4: Extract price scale range (Y-axis bounds)
+                        try {
+                            const scaleLabels = document.querySelectorAll("[class*='price-axis'] [class*='label']");
+                            const prices = [];
+                            for (const label of scaleLabels) {
+                                const t = label.textContent.trim().replace(/,/g, '');
+                                const v = parseFloat(t);
+                                if (!isNaN(v) && v > 0) prices.push(v);
+                            }
+                            if (prices.length >= 2) {
+                                prices.sort((a, b) => a - b);
+                                result.price_scale = {
+                                    min: prices[0],
+                                    max: prices[prices.length - 1],
+                                    labels: prices
+                                };
+                            }
+                        } catch(e) {}
+                        
+                        // Method 5: TradingView Technicals Rating widget (if present)
+                        try {
+                            const techEl = document.querySelector("[class*='speedometer'], [class*='recommendation']");
+                            if (techEl) {
+                                result.technicals_rating = techEl.textContent.trim();
+                            }
+                        } catch(e) {}
+                        
+                        return result;
+                    }""")
+                    
+                    if deep_data:
+                        # Merge deep indicators
+                        deep_indicators = deep_data.get('indicators_deep', {})
+                        for k, v in deep_indicators.items():
+                            if k not in ('legend_value_count',) and v:
+                                data["indicators"][k] = v
+                        
+                        # Extract additional indicators from all_studies
+                        for study in deep_data.get('all_studies', []):
+                            name = study.get('name', '')
+                            vals = study.get('values', [])
+                            name_lower = name.lower()
+                            
+                            # Extract Bollinger Bands values
+                            if 'bollinger' in name_lower or 'bb' in name_lower:
+                                if len(vals) >= 3:
+                                    data["indicators"]["BB_upper"] = vals[0].replace(',', '')
+                                    data["indicators"]["BB_middle"] = vals[1].replace(',', '') if len(vals) > 1 else None
+                                    data["indicators"]["BB_lower"] = vals[2].replace(',', '') if len(vals) > 2 else None
+                            
+                            # Extract Stochastic
+                            elif 'stoch' in name_lower:
+                                if len(vals) >= 2:
+                                    data["indicators"]["Stoch_K"] = vals[0]
+                                    data["indicators"]["Stoch_D"] = vals[1]
+                            
+                            # VWAP
+                            elif 'vwap' in name_lower:
+                                if vals:
+                                    data["indicators"]["VWAP"] = vals[0].replace(',', '')
+                            
+                            # ADX
+                            elif 'adx' in name_lower:
+                                if vals:
+                                    data["indicators"]["ADX"] = vals[0]
+                            
+                            # ATR  
+                            elif 'atr' in name_lower:
+                                if vals:
+                                    data["indicators"]["ATR"] = vals[0].replace(',', '')
+                            
+                            # Supertrend
+                            elif 'supertrend' in name_lower:
+                                if vals:
+                                    data["indicators"]["Supertrend"] = vals[0].replace(',', '')
+                            
+                            # Additional MAs/EMAs not caught by Phase-15
+                            elif any(ma in name_lower for ma in ('ema', 'sma', 'wma')):
+                                ma_match = re.search(r'(e?s?w?ma)\s*\(?(\d+)\)?', name, re.IGNORECASE)
+                                if ma_match and vals:
+                                    key = f"{ma_match.group(1).upper()}({ma_match.group(2)})"
+                                    if key not in data["indicators"]:
+                                        data["indicators"][key] = vals[0].replace(',', '')
+                        
+                        # Store price scale
+                        price_scale = deep_data.get('price_scale')
+                        if price_scale:
+                            data["price_scale"] = price_scale
+                        
+                        # Technicals rating
+                        rating = deep_data.get('technicals_rating')
+                        if rating:
+                            data["technicals_rating"] = rating
+                        
+                        deep_count = len([k for k in data["indicators"] if k not in ('Open', 'High', 'Low', 'Close')])
+                        if deep_count > 0:
+                            logger.info(f"Phase-D: Deep JS extraction yielded {deep_count} indicator values")
+                            
+                except Exception as e:
+                    logger.debug(f"Phase-D: Deep JS extraction failed (non-critical): {e}")
+                
                 if data.get("indicators"):
-                    logger.info(f"Phase-15: Extracted indicators from DOM: {list(data['indicators'].keys())}")
+                    logger.info(f"Phase-D: All extracted indicators: {list(data['indicators'].keys())}")
                 if data.get("volume"):
-                    logger.info(f"Phase-15: Volume from DOM: {data['volume']}")
+                    logger.info(f"Phase-D: Volume from DOM: {data['volume']}")
                 
                 return data
             

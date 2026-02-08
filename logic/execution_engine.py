@@ -367,6 +367,15 @@ class ExecutionEngine:
         if self.chat_ui:
             self.chat_ui.log(f"🔄 **Multi-Timeframe Analysis: {symbol}**", "INFO")
             self.chat_ui.log("Analyzing across Monthly → Weekly → Daily timeframes...", "INFO")
+            
+            # Phase-D: Display model quality info
+            try:
+                from logic.model_registry import ModelRegistry
+                registry = ModelRegistry("http://localhost:11434")
+                registry.discover()
+                self.chat_ui.log(f"Models: {registry.get_status_summary()}", "INFO")
+            except Exception:
+                pass
         
         # Timeframes to analyze in order
         timeframes = [

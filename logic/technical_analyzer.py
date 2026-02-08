@@ -81,14 +81,30 @@ class TechnicalAnalyzer:
             # Build analysis prompt with reconciled data
             prompt = self._build_analysis_prompt(dom_data, vision_observation, reconciliation)
             
-            # Get LLM analysis using generate_completion (not plan)
-            llm_response = self.llm_client.generate_completion(
-                system_prompt="You are a professional technical analyst providing precise market analysis for trading decisions. Analyze charts accurately with specific support/resistance levels and clear trend identification.",
-                user_prompt=prompt
-            )
+            # Phase-D: Use quality-gated JSON generation when available
+            system_prompt = "You are a professional technical analyst providing precise market analysis for trading decisions. Analyze charts accurately with specific support/resistance levels and clear trend identification."
             
-            # Parse LLM response into structured format
-            analysis = self._parse_analysis(llm_response, dom_data)
+            required_fields = ["symbol", "trend", "structure", "support", "resistance", "momentum", "bias"]
+            
+            try:
+                # Try generate_json first (Phase-D quality gate)
+                if hasattr(self.llm_client, 'generate_json'):
+                    analysis = self.llm_client.generate_json(
+                        system_prompt=system_prompt,
+                        user_prompt=prompt,
+                        required_fields=required_fields
+                    )
+                    # Apply post-parse validation and defaults
+                    analysis = self._ensure_defaults(analysis, dom_data)
+                else:
+                    raise AttributeError("generate_json not available")
+            except (ValueError, AttributeError):
+                # Fallback: old path (generate_completion + manual parse)
+                llm_response = self.llm_client.generate_completion(
+                    system_prompt=system_prompt,
+                    user_prompt=prompt
+                )
+                analysis = self._parse_analysis(llm_response, dom_data)
             
             # Add safety disclaimer
             if self.output_config.get("include_disclaimer", True):
@@ -169,8 +185,42 @@ CHART DATA (DOM - AUTHORITATIVE):
         # Add indicators if available
         if indicators:
             prompt += "\nINDICATORS (FROM DOM - AUTHORITATIVE):\n"
+            
+            # Group indicators by type for cleaner presentation
+            ma_indicators = {}
+            oscillators = {}
+            bands_levels = {}
+            ohlc = {}
+            
             for name, value in indicators.items():
-                prompt += f"- {name}: {value}\n"
+                name_lower = name.lower()
+                if any(ma in name_lower for ma in ('ema', 'sma', 'wma')):
+                    ma_indicators[name] = value
+                elif any(osc in name_lower for osc in ('rsi', 'macd', 'stoch', 'adx')):
+                    oscillators[name] = value
+                elif any(bl in name_lower for bl in ('bb_', 'vwap', 'supertrend', 'atr')):
+                    bands_levels[name] = value
+                elif name_lower in ('open', 'high', 'low', 'close'):
+                    ohlc[name] = value
+                else:
+                    oscillators[name] = value
+            
+            if ohlc:
+                prompt += "  OHLC:\n"
+                for name, value in ohlc.items():
+                    prompt += f"    - {name}: {value}\n"
+            if ma_indicators:
+                prompt += "  Moving Averages:\n"
+                for name, value in ma_indicators.items():
+                    prompt += f"    - {name}: {value}\n"
+            if oscillators:
+                prompt += "  Oscillators:\n"
+                for name, value in oscillators.items():
+                    prompt += f"    - {name}: {value}\n"
+            if bands_levels:
+                prompt += "  Bands/Levels:\n"
+                for name, value in bands_levels.items():
+                    prompt += f"    - {name}: {value}\n"
         else:
             prompt += "\nINDICATORS: None available from DOM\n"
         
@@ -329,6 +379,57 @@ CRITICAL LOGIC RULES:
                 "error": "Failed to parse structured analysis"
             }
     
+    def _ensure_defaults(self, analysis: Dict[str, Any], dom_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Phase-D: Ensure all required fields have values after JSON quality gate.
+        
+        Args:
+            analysis: Parsed JSON from LLM
+            dom_data: Original DOM data for fallbacks
+            
+        Returns:
+            Analysis dict with all required fields populated
+        """
+        # Symbol and timeframe from DOM
+        if "symbol" not in analysis or not analysis["symbol"]:
+            analysis["symbol"] = dom_data.get("symbol", "Unknown")
+        if "timeframe" not in analysis or not analysis["timeframe"]:
+            analysis["timeframe"] = dom_data.get("timeframe", "1D")
+        
+        # Ensure lists for levels
+        for field in ["support", "resistance"]:
+            if field not in analysis:
+                analysis[field] = []
+            elif not isinstance(analysis[field], list):
+                analysis[field] = [analysis[field]]
+        
+        # Ensure string fields
+        defaults = {
+            "trend": "Unknown",
+            "structure": "range-bound",
+            "momentum": "neutral",
+            "momentum_condition": "neutral",
+            "volume_trend": "unavailable",
+            "candlestick_pattern": "none",
+            "bias": "Monitor key levels",
+            "reasoning": ""
+        }
+        for field, default in defaults.items():
+            if field not in analysis or not analysis[field]:
+                analysis[field] = default
+        
+        # Add price from DOM
+        if "price" not in analysis and dom_data.get("price"):
+            analysis["price"] = dom_data.get("price")
+        
+        # Run validation
+        validation_errors = self._validate_logic_consistency(analysis)
+        if validation_errors:
+            logger.warning(f"Logic consistency issues: {'; '.join(validation_errors)}")
+            analysis["validation_warnings"] = validation_errors
+        
+        return analysis
+
     def _validate_logic_consistency(self, analysis: Dict[str, Any]) -> List[str]:
         """
         Validate logical consistency of analysis.

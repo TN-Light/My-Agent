@@ -2,10 +2,13 @@
 LLM Client - Ollama Integration
 Local-only LLM inference client.
 
+Phase-D: Quality gate — validates JSON output, retries with simplified prompt.
+
 Focuses solely on API communication.
 Logic moved to logic/llm_planner.py
 """
 import logging
+import json
 import time
 import requests
 from typing import Optional
@@ -146,4 +149,101 @@ class LLMClient:
         raise ConnectionError(
             f"Ollama request failed after {max_retries} attempts. "
             f"Last error: {last_exception}"
+        )
+
+    def generate_json(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        required_fields: Optional[list] = None,
+        max_retries: int = 3
+    ) -> dict:
+        """
+        Phase-D: Quality-gated JSON generation.
+        
+        Calls generate_completion and validates the response is valid JSON.
+        If JSON parsing fails, retries with a simplified prompt.
+        
+        Args:
+            system_prompt: System prompt for the LLM
+            user_prompt: User prompt containing analysis request
+            required_fields: List of field names the JSON must contain
+            max_retries: Max retry attempts (default 3)
+            
+        Returns:
+            Parsed JSON dict
+            
+        Raises:
+            ValueError: If all attempts produce invalid JSON
+        """
+        if required_fields is None:
+            required_fields = ["symbol", "trend", "support", "resistance"]
+        
+        last_response = ""
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                if attempt == 1:
+                    # First attempt: full prompt
+                    raw = self.generate_completion(system_prompt, user_prompt)
+                else:
+                    # Retry: simplified prompt asking to fix the output
+                    repair_prompt = (
+                        f"Your previous response was not valid JSON. "
+                        f"Please respond with ONLY a valid JSON object containing these fields: "
+                        f"{', '.join(required_fields)}.\n\n"
+                        f"Previous response (fix this):\n{last_response[:500]}\n\n"
+                        f"Return ONLY the corrected JSON, no other text."
+                    )
+                    raw = self.generate_completion(system_prompt, repair_prompt)
+                
+                last_response = raw
+                
+                # Clean markdown code blocks
+                cleaned = raw.strip()
+                if cleaned.startswith("```"):
+                    lines = cleaned.split("\n")
+                    cleaned = "\n".join(lines[1:])
+                    if cleaned.endswith("```"):
+                        cleaned = cleaned[:-3]
+                    cleaned = cleaned.strip()
+                
+                # Try to extract JSON from mixed text
+                if not cleaned.startswith("{"):
+                    # Look for JSON object in the response
+                    start = cleaned.find("{")
+                    end = cleaned.rfind("}") + 1
+                    if start >= 0 and end > start:
+                        cleaned = cleaned[start:end]
+                
+                parsed = json.loads(cleaned)
+                
+                # Validate required fields
+                missing = [f for f in required_fields if f not in parsed]
+                if missing and attempt < max_retries:
+                    logger.warning(
+                        f"Phase-D: JSON missing fields {missing} on attempt {attempt}, retrying..."
+                    )
+                    continue
+                
+                if attempt > 1:
+                    logger.info(f"Phase-D: JSON quality gate passed on attempt {attempt}")
+                
+                return parsed
+                
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"Phase-D: JSON parse failed on attempt {attempt}/{max_retries}: {e}"
+                )
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+            except ConnectionError:
+                raise  # Don't swallow connection errors
+        
+        # All attempts failed — return what we can
+        logger.error(f"Phase-D: JSON quality gate failed after {max_retries} attempts")
+        raise ValueError(
+            f"LLM failed to produce valid JSON after {max_retries} attempts. "
+            f"Last response: {last_response[:200]}"
         )

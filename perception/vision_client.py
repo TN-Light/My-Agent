@@ -243,47 +243,53 @@ class VisionClient:
             tf_label = "Hourly"
         
         if is_chart_analysis:
-            prompt = f"""You are a professional chart analyst. Analyze this {tf_label} trading chart screenshot with precision.
+            prompt = f"""You are a professional chart analyst specializing in VISUAL pattern recognition.
+This is a {tf_label} trading chart. Each candle = one {tf_label.lower()} period.
 
-EXTRACT THE FOLLOWING (be specific with numbers):
+YOUR ROLE: Identify VISUAL patterns, structure, and candlestick formations.
+DO NOT try to read exact numbers from the chart — numeric data is extracted separately from DOM.
 
-1. PRICE ACTION & TREND:
-   - Current trend direction (bullish / bearish / sideways)
-   - Is price making higher-highs & higher-lows, or lower-highs & lower-lows?
-   - How many candles are visible? Approximate how far back does the chart go?
+ANALYZE THESE VISUAL ELEMENTS ONLY:
 
-2. KEY PRICE LEVELS (read the Y-axis scale carefully):
-   - List ALL visible support levels where price bounced UP (exact numbers from chart)
-   - List ALL visible resistance levels where price reversed DOWN (exact numbers from chart)
-   - Which level is price closest to right now?
-   - Read the price scale on the right side of the chart carefully
+1. TREND & STRUCTURE (most important):
+   - Is price making higher-highs & higher-lows (uptrend)?
+   - Or lower-highs & lower-lows (downtrend)?  
+   - Or moving sideways within a range?
+   - How strong/clean is the trend? Any signs of weakening?
 
-3. CANDLESTICK PATTERNS (last 3-5 candles):
-   - Describe the most recent candles: are they large/small body? Long wicks?
-   - Any recognizable patterns? (hammer, doji, engulfing, shooting star, pin bar, inside bar)
-   - Color of recent candles (green/red or bullish/bearish)
+2. CANDLESTICK PATTERNS (last 3-5 candles):
+   - Are recent candles large-body or small-body?
+   - Any long wicks/shadows? Upper or lower?
+   - Name any recognizable patterns: doji, hammer, engulfing, shooting star, pin bar, inside bar, morning/evening star, harami
+   - Color sequence of last candles (green/red)
 
-4. VOLUME (if volume bars are visible at bottom):
-   - Is volume increasing or decreasing on recent candles?
-   - Any volume spikes? On which candles (bullish or bearish)?
-   - Compare recent volume to average visible volume
+3. CHART PATTERNS (if visible):
+   - Any geometric patterns? Triangle (ascending/descending/symmetrical), wedge, channel, flag, pennant
+   - Head and shoulders? Double top/bottom? Cup and handle?
+   - Is price at a breakout/breakdown point of any pattern?
 
-5. INDICATORS (if any overlays or sub-charts are visible):
-   - Moving averages: read their values, is price above or below them?
-   - RSI/MACD/other oscillators: read their current values if visible
-   - Any divergence between price and indicators?
+4. VISUAL SUPPORT/RESISTANCE ZONES:
+   - Where has price bounced UP multiple times? (support zone)
+   - Where has price reversed DOWN multiple times? (resistance zone)
+   - Describe location relative to current price (well below, just below, at price, etc.)
+   - Do NOT try to read the exact numbers — just describe the zones visually
 
-6. CHART PATTERN:
-   - Any recognizable chart pattern? (channel, triangle, wedge, head-and-shoulders, double top/bottom, flag, cup-and-handle)
-   - Is price at a breakout/breakdown point?
+5. VOLUME BARS (if visible at bottom):
+   - Are recent volume bars taller or shorter than earlier ones?
+   - Any volume spikes? Are they on green or red candles?
+   - Is volume confirming or diverging from price direction?
 
-CRITICAL INSTRUCTIONS:
-- Read the Y-axis price scale carefully and provide EXACT price numbers
-- This is a {tf_label} timeframe chart — each candle = one {tf_label.lower()} period
-- Focus ONLY on what is clearly visible
-- Do NOT say "buy" or "sell" — this is observation ONLY
-- If you cannot read a value clearly, say "unclear" rather than guessing
-- Provide numbers, not vague descriptions like 'higher' or 'lower'"""
+6. VISUAL MOMENTUM:
+   - Are the candle bodies getting larger (accelerating) or smaller (decelerating)?
+   - Any divergence between price movement and visible momentum indicators?
+   - Does the chart look "stretched" or "compressed"?
+
+CRITICAL RULES:
+- Focus ONLY on what you can clearly SEE in the image
+- Describe visual locations, NOT exact price numbers
+- Say "unclear" if you cannot determine something
+- Do NOT say "buy" or "sell" — observation ONLY
+- Prioritize: Trend > Candlestick > Chart Pattern > Volume"""
         else:
             # Original prompt for general screen description
             prompt = (

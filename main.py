@@ -124,19 +124,42 @@ class Agent:
         
         # Initialize LLM client if enabled
         llm_client = None
+        self.model_registry = None
         planner_config = self.config.get("planner", {})
         if planner_config.get("use_llm", False):
             try:
                 from logic.llm_client import LLMClient
                 llm_config = self.config.get("llm", {})
+                base_url = llm_config.get("base_url", "http://localhost:11434")
+                
+                # Phase-D: Auto-detect best available models
+                try:
+                    from logic.model_registry import ModelRegistry
+                    self.model_registry = ModelRegistry(base_url)
+                    self.model_registry.discover()
+                    
+                    best_text = self.model_registry.get_best_text_model()
+                    logger.info(f"Phase-D: Auto-selected text model: {best_text.name} (priority={best_text.priority})")
+                    
+                    # Use auto-detected model, with config override if explicitly set
+                    text_model = llm_config.get("model", best_text.name)
+                    text_timeout = max(llm_config.get("timeout", 30), 120 if best_text.priority >= 80 else 60)
+                    
+                    # Show upgrade suggestions in log
+                    for suggestion in self.model_registry.get_model_upgrade_suggestions():
+                        logger.info(f"Phase-D: {suggestion}")
+                except Exception as e:
+                    logger.warning(f"Phase-D: Model registry failed, using defaults: {e}")
+                    text_model = llm_config.get("model", "llama3.2")
+                    text_timeout = llm_config.get("timeout", 30)
                 
                 llm_client = LLMClient(
-                    base_url=llm_config.get("base_url", "http://localhost:11434"),
-                    model=llm_config.get("model", "llama3.2"),
+                    base_url=base_url,
+                    model=text_model,
                     temperature=llm_config.get("temperature", 0.1),
-                    timeout=llm_config.get("timeout", 30)
+                    timeout=text_timeout
                 )
-                logger.info("LLM client initialized")
+                logger.info(f"LLM client initialized: {text_model}")
                 
                 # Verify required models are available in Ollama
                 self._verify_ollama_models(llm_config)
@@ -190,13 +213,25 @@ class Agent:
                 from perception.vision_client import VisionClient
                 from perception.screen_capture import ScreenCapture
                 
+                # Phase-D: Auto-detect best vision model
+                vision_model = vision_config.get("model", "llama3.2-vision")
+                vision_timeout = vision_config.get("timeout", 60)
+                try:
+                    if self.model_registry:
+                        best_vision = self.model_registry.get_best_vision_model()
+                        vision_model = vision_config.get("model", best_vision.name)
+                        vision_timeout = max(vision_timeout, 90 if best_vision.priority >= 80 else 60)
+                        logger.info(f"Phase-D: Auto-selected vision model: {best_vision.name} (priority={best_vision.priority})")
+                except Exception as e:
+                    logger.warning(f"Phase-D: Vision model auto-detect failed: {e}")
+                
                 vision_client = VisionClient(
                     base_url=vision_config.get("base_url", "http://localhost:11434"),
-                    model=vision_config.get("model", "llama3.2-vision"),
-                    timeout=vision_config.get("timeout", 60)
+                    model=vision_model,
+                    timeout=vision_timeout
                 )
                 screen_capture = ScreenCapture()
-                logger.info("Vision client initialized (Phase-2C/3A/3B)")
+                logger.info(f"Vision client initialized: {vision_model} (Phase-D)")
             except Exception as e:
                 logger.error(f"Failed to initialize vision client: {e}")
                 logger.warning("Vision observations/verification disabled")

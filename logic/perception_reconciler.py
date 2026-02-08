@@ -191,7 +191,7 @@ class PerceptionReconciler:
                 report.facts[dim] = winner
         
         # Step 5: Calculate overall confidence
-        target_dimensions = {"trend", "momentum", "support", "resistance", "volume", "structure"}
+        target_dimensions = {"trend", "momentum", "momentum_condition", "support", "resistance", "volume", "structure"}
         covered = sum(1 for d in target_dimensions if d in report.facts)
         report.completeness = covered / len(target_dimensions) if target_dimensions else 0
         
@@ -248,6 +248,7 @@ class PerceptionReconciler:
         
         # Indicators
         indicators = dom_data.get("indicators", {})
+        price_val = self._to_float(price)  # Pre-compute for all indicator comparisons
         for name, value in indicators.items():
             name_lower = name.lower()
             
@@ -283,7 +284,6 @@ class PerceptionReconciler:
             # Moving averages → support/resistance
             elif any(ma in name_lower for ma in ("ema", "sma", "wma")):
                 ma_val = self._to_float(value)
-                price_val = self._to_float(price)
                 if ma_val is not None and price_val is not None:
                     if ma_val < price_val:
                         claims.append(PerceptionClaim(
@@ -335,6 +335,126 @@ class PerceptionReconciler:
                         source=ClaimSource.DOM_NUMERIC,
                         confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
                         raw_text=f"MACD={value}"
+                    ))
+            
+            # ─── Phase-D: Deep-extracted indicators ───────────────
+            
+            # Bollinger Bands → dynamic support/resistance
+            elif name_lower.startswith("bb_"):
+                bb_val = self._to_float(value)
+                if bb_val is not None and price_val is not None:
+                    if name_lower == "bb_upper":
+                        claims.append(PerceptionClaim(
+                            dimension="resistance",
+                            value=bb_val,
+                            source=ClaimSource.DOM_NUMERIC,
+                            confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                            raw_text=f"Bollinger Upper Band={value}"
+                        ))
+                    elif name_lower == "bb_lower":
+                        claims.append(PerceptionClaim(
+                            dimension="support",
+                            value=bb_val,
+                            source=ClaimSource.DOM_NUMERIC,
+                            confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                            raw_text=f"Bollinger Lower Band={value}"
+                        ))
+                    elif name_lower == "bb_middle":
+                        dim = "support" if bb_val < price_val else "resistance"
+                        claims.append(PerceptionClaim(
+                            dimension=dim,
+                            value=bb_val,
+                            source=ClaimSource.DOM_NUMERIC,
+                            confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                            raw_text=f"Bollinger Middle Band={value}"
+                        ))
+            
+            # Stochastic → momentum condition
+            elif name_lower.startswith("stoch_"):
+                stoch_val = self._to_float(value)
+                if stoch_val is not None and name_lower == "stoch_k":
+                    claims.append(PerceptionClaim(
+                        dimension="stochastic",
+                        value=stoch_val,
+                        source=ClaimSource.DOM_NUMERIC,
+                        confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                        raw_text=f"Stochastic %K={value}"
+                    ))
+                    # Derive momentum condition from Stochastic
+                    if stoch_val > 80:
+                        claims.append(PerceptionClaim(
+                            dimension="momentum_condition",
+                            value="exhausting",
+                            source=ClaimSource.DOM_NUMERIC,
+                            confidence=0.85,
+                            raw_text=f"Stoch %K={stoch_val} > 80 → overbought"
+                        ))
+                    elif stoch_val < 20:
+                        claims.append(PerceptionClaim(
+                            dimension="momentum_condition",
+                            value="improving",
+                            source=ClaimSource.DOM_NUMERIC,
+                            confidence=0.85,
+                            raw_text=f"Stoch %K={stoch_val} < 20 → oversold"
+                        ))
+            
+            # VWAP → dynamic support/resistance
+            elif name_lower == "vwap":
+                vwap_val = self._to_float(value)
+                if vwap_val is not None and price_val is not None:
+                    dim = "support" if vwap_val < price_val else "resistance"
+                    claims.append(PerceptionClaim(
+                        dimension=dim,
+                        value=vwap_val,
+                        source=ClaimSource.DOM_NUMERIC,
+                        confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                        raw_text=f"VWAP={value} ({'below' if vwap_val < price_val else 'above'} price → dynamic {dim})"
+                    ))
+            
+            # Supertrend → dynamic support/resistance + trend signal
+            elif name_lower == "supertrend":
+                st_val = self._to_float(value)
+                if st_val is not None and price_val is not None:
+                    dim = "support" if st_val < price_val else "resistance"
+                    claims.append(PerceptionClaim(
+                        dimension=dim,
+                        value=st_val,
+                        source=ClaimSource.DOM_NUMERIC,
+                        confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                        raw_text=f"Supertrend={value} → dynamic {dim}"
+                    ))
+                    # Supertrend below price = bullish, above = bearish
+                    trend = "bullish" if st_val < price_val else "bearish"
+                    claims.append(PerceptionClaim(
+                        dimension="trend",
+                        value=trend,
+                        source=ClaimSource.DOM_NUMERIC,
+                        confidence=0.80,
+                        raw_text=f"Supertrend={value} {'below' if st_val < price_val else 'above'} price → {trend}"
+                    ))
+            
+            # ADX → trend strength
+            elif name_lower == "adx":
+                adx_val = self._to_float(value)
+                if adx_val is not None:
+                    claims.append(PerceptionClaim(
+                        dimension="adx",
+                        value=adx_val,
+                        source=ClaimSource.DOM_NUMERIC,
+                        confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                        raw_text=f"ADX={value} ({'strong trend' if adx_val > 25 else 'weak/no trend'})"
+                    ))
+            
+            # ATR → volatility measure
+            elif name_lower == "atr":
+                atr_val = self._to_float(value)
+                if atr_val is not None:
+                    claims.append(PerceptionClaim(
+                        dimension="atr",
+                        value=atr_val,
+                        source=ClaimSource.DOM_NUMERIC,
+                        confidence=TRUST_WEIGHTS[ClaimSource.DOM_NUMERIC],
+                        raw_text=f"ATR={value}"
                     ))
         
         # Volume
@@ -787,10 +907,11 @@ class PerceptionReconciler:
         
         # Group facts by category
         direction_dims = ("trend", "structure")
-        momentum_dims = ("momentum", "momentum_condition", "rsi", "macd")
+        momentum_dims = ("momentum", "momentum_condition", "rsi", "macd", "stochastic", "adx")
         level_dims = ("support", "resistance")
         volume_dims = ("volume", "volume_trend")
         pattern_dims = ("candlestick_pattern", "chart_pattern")
+        volatility_dims = ("atr",)
         
         # Direction
         dir_facts = [(d, report.facts[d]) for d in direction_dims if d in report.facts]
@@ -837,6 +958,14 @@ class PerceptionReconciler:
             lines.append("PATTERNS:")
             for dim, claim in pat_facts:
                 lines.append(f"  - {dim}: {claim.value} [trust=MEDIUM, source={claim.source.value}]")
+        
+        # Volatility (Phase-D)
+        vol_facts_v = [(d, report.facts[d]) for d in volatility_dims if d in report.facts]
+        if vol_facts_v:
+            lines.append("VOLATILITY:")
+            for dim, claim in vol_facts_v:
+                trust = "HIGH" if claim.confidence >= 0.8 else "MEDIUM"
+                lines.append(f"  - {dim}: {claim.value} [trust={trust}, source={claim.source.value}]")
         
         return "\n".join(lines)
     
