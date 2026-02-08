@@ -33,7 +33,7 @@ class TechnicalAnalyzer:
     NEVER provides trading recommendations or execution instructions.
     """
     
-    def __init__(self, config: dict, llm_client: LLMClient, market_store=None):
+    def __init__(self, config: dict, llm_client: LLMClient, market_store=None, regime_context=None):
         """
         Initialize technical analyzer.
         
@@ -41,12 +41,14 @@ class TechnicalAnalyzer:
             config: Market analysis configuration
             llm_client: LLM client for reasoning
             market_store: MarketAnalysisStore for persistence (Phase-2C)
+            regime_context: RegimeContext from Phase-B (optional)
         """
         self.config = config
         self.llm_client = llm_client
         self.ma_config = config.get("market_analysis", {})
         self.output_config = self.ma_config.get("output", {})
         self.market_store = market_store
+        self.regime_context = regime_context
         
         # Phase-16: Perception Reconciler
         self.reconciler = PerceptionReconciler() if _reconciler_available else None
@@ -244,6 +246,13 @@ CHART DATA (DOM - AUTHORITATIVE):
             prompt += f"Use the trust-weighted facts above as your PRIMARY input. Where trust=HIGH, treat as fact.\n"
             prompt += f"Where trust=LOW (e.g., VLM-read price levels), verify against other evidence.\n"
             prompt += f"--- END RECONCILIATION ---\n"
+        
+        # Phase-B: Add regime context from market memory
+        if self.regime_context:
+            try:
+                prompt += f"\n{self.regime_context.get_prompt_context()}\n"
+            except Exception:
+                pass
         
         prompt += f"""
 TASK:

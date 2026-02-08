@@ -176,6 +176,22 @@ class ExecutionEngine:
         except Exception as e:
             logger.warning(f"News client initialization failed: {e}")
         
+        # Phase-B: Regime Detector (Market Regime Memory)
+        self.regime_detector = None
+        try:
+            from logic.regime_detector import RegimeDetector, RegimeMemoryStore
+            regime_store = RegimeMemoryStore()
+            if self.market_store:
+                self.regime_detector = RegimeDetector(
+                    analysis_store=self.market_store,
+                    regime_store=regime_store
+                )
+                logger.info("Phase-B: Regime Detector initialized")
+            else:
+                logger.warning("Phase-B: Regime Detector skipped (no market_store)")
+        except Exception as e:
+            logger.warning(f"Phase-B initialization failed: {e}")
+        
         # Phase-2B: TradingView client (singleton per agent lifetime)
         self.tradingview_client = None
         
@@ -384,6 +400,18 @@ class ExecutionEngine:
             ("1D", "daily")
         ]
         
+        # Phase-B: Detect regime before analysis loop (once per symbol)
+        mtf_regime_context = None
+        if self.regime_detector:
+            try:
+                mtf_regime_context = self.regime_detector.detect(symbol)
+                if self.chat_ui and mtf_regime_context.regime.value != "unknown":
+                    self.chat_ui.log(f"\nRegime: {mtf_regime_context.regime.value.upper()} "
+                                     f"({mtf_regime_context.trend_direction}, "
+                                     f"{mtf_regime_context.trend_duration_days}d)", "INFO")
+            except Exception as regime_err:
+                logger.warning(f"Phase-B regime detection failed: {regime_err}")
+        
         mtf_results = []
         
         for tf_code, tf_name in timeframes:
@@ -394,7 +422,7 @@ class ExecutionEngine:
                     self.chat_ui.log(f"\n📊 **Analyzing {tf_name.upper()} timeframe...**", "INFO")
                 
                 # Perform single timeframe analysis
-                analysis_result = self._analyze_single_timeframe(symbol, tf_code)
+                analysis_result = self._analyze_single_timeframe(symbol, tf_code, regime_context=mtf_regime_context)
                 
                 if analysis_result:
                     mtf_results.append({
@@ -645,7 +673,7 @@ class ExecutionEngine:
             if self.chat_ui:
                 self.chat_ui.log(f"Synthesis failed: {e}", "ERROR")
     
-    def _analyze_single_timeframe(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+    def _analyze_single_timeframe(self, symbol: str, timeframe: str, regime_context=None) -> Optional[Dict[str, Any]]:
         """
         Analyze a single timeframe (reusable for both single and MTF analysis).
         
@@ -709,7 +737,7 @@ class ExecutionEngine:
                 logger.error("LLM client not available")
                 return None
             
-            analyzer = TechnicalAnalyzer(self.config, self.llm_client, market_store=self.market_store)
+            analyzer = TechnicalAnalyzer(self.config, self.llm_client, market_store=self.market_store, regime_context=regime_context)
             analysis = analyzer.analyze(dom_data, vision_observation)
             
             # Validate safety
@@ -773,11 +801,19 @@ class ExecutionEngine:
             else:
                 logger.warning(f"[SCANNER] Symbol resolver not available for {symbol}")
             
+            # Phase-B: Detect regime before scanner analysis loop
+            scanner_regime_ctx = None
+            if self.regime_detector:
+                try:
+                    scanner_regime_ctx = self.regime_detector.detect(symbol)
+                except Exception:
+                    pass
+            
             # Step 2: Fetch data for each timeframe (Phase-4)
             mtf_results = []
             for tf_code, tf_name in timeframes:
                 try:
-                    analysis_result = self._analyze_single_timeframe(symbol, tf_code)
+                    analysis_result = self._analyze_single_timeframe(symbol, tf_code, regime_context=scanner_regime_ctx)
                     if analysis_result:
                         mtf_results.append({
                             "timeframe": tf_name,
@@ -909,7 +945,16 @@ class ExecutionEngine:
                     }
                     trend_str = trend_mapping.get(monthly_trend.lower(), "RANGE")
                     
+                    # Phase-B: Detect regime from market memory
                     regime_flags_set = set()
+                    if self.regime_detector:
+                        try:
+                            regime_ctx = self.regime_detector.detect(symbol)
+                            regime_flags_set = regime_ctx.get_regime_flags()
+                            if regime_flags_set:
+                                logger.info(f"[SCANNER] {symbol} regime flags: {regime_flags_set}")
+                        except Exception as regime_err:
+                            logger.warning(f"[SCANNER] {symbol} regime detection failed: {regime_err}")
                     
                     summary = self.human_summary.generate(
                         alignment_state=strict_alignment,
@@ -1806,10 +1851,33 @@ class ExecutionEngine:
                     }
                     trend_str = trend_mapping.get(monthly_trend.lower(), "RANGE")
                     
-                    # Regime flags (currently empty, wire from market memory later)
+                    # Phase-B: Detect regime from market memory
                     regime_flags_set = set()
-                    # TODO: Add regime_flags_set.add("REGIME_CHANGE") when market memory detects it
-                    # TODO: Add regime_flags_set.add("EDGE_DEGRADATION") when edge tracking detects it
+                    regime_context = None
+                    if self.regime_detector:
+                        try:
+                            regime_context = self.regime_detector.detect(symbol)
+                            regime_flags_set = regime_context.get_regime_flags()
+                            if regime_flags_set:
+                                logger.info(f"Phase-B: {symbol} regime flags: {regime_flags_set}")
+                            # Display regime context in UI
+                            if self.chat_ui and regime_context.regime.value != "unknown":
+                                self.chat_ui.log("", "INFO")
+                                self.chat_ui.log(f"REGIME: {regime_context.regime.value.upper()} "
+                                                 f"(confidence: {regime_context.regime_confidence:.0%})", "INFO")
+                                if regime_context.trend_direction != "unknown":
+                                    self.chat_ui.log(f"  Trend: {regime_context.trend_direction} "
+                                                     f"for {regime_context.trend_duration_days} days "
+                                                     f"(consistency: {regime_context.trend_consistency:.0%})", "INFO")
+                                if regime_context.regime_changed:
+                                    self.chat_ui.log(
+                                        f"  !! REGIME CHANGE: {regime_context.previous_regime.value} → "
+                                        f"{regime_context.regime.value}", "WARNING"
+                                    )
+                                if regime_context.key_levels:
+                                    self.chat_ui.log(f"  Key levels tracked: {len(regime_context.key_levels)}", "INFO")
+                        except Exception as regime_err:
+                            logger.warning(f"Phase-B regime detection failed: {regime_err}")
                     
                     # Phase-14: Fetch news/catalysts before final verdict
                     catalyst_report = None
