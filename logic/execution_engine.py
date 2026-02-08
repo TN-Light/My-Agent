@@ -2479,26 +2479,27 @@ RESPOND: Only the exact NSE symbol (uppercase). If unclear or not found, say "NO
             self.chat_ui.log("Querying market memory...", "INFO")
             self.chat_ui.set_status("Thinking")
         
-        instruction_lower = instruction.lower()
-        
-        # Determine query type
-        if "compare" in instruction_lower or "vs" in instruction_lower or "versus" in instruction_lower:
-            query_type = "comparison"
-        elif "last analysis" in instruction_lower or "previous analysis" in instruction_lower or "what was" in instruction_lower:
-            query_type = "last_analysis"
-        elif "trend change" in instruction_lower or "has trend changed" in instruction_lower:
-            query_type = "trend_change"
-        elif "stronger" in instruction_lower or "weaker" in instruction_lower or "which stock" in instruction_lower:
-            query_type = "strongest"
-        elif "summarize" in instruction_lower or "summary" in instruction_lower or "market bias" in instruction_lower:
-            query_type = "market_summary"
-        else:
-            query_type = "generic"
-        
-        self.market_query_handler.handle_query(
-            instruction, query_type,
-            symbol_extractor=self._extract_symbol_from_instruction
-        )
+        try:
+            instruction_lower = instruction.lower()
+            
+            # Determine query type
+            if "compare" in instruction_lower or "vs" in instruction_lower or "versus" in instruction_lower:
+                query_type = "comparison"
+            elif "last analysis" in instruction_lower or "previous analysis" in instruction_lower or "what was" in instruction_lower:
+                query_type = "last_analysis"
+            elif "trend change" in instruction_lower or "has trend changed" in instruction_lower:
+                query_type = "trend_change"
+            elif "stronger" in instruction_lower or "weaker" in instruction_lower or "which stock" in instruction_lower:
+                query_type = "strongest"
+            elif "summarize" in instruction_lower or "summary" in instruction_lower or "market bias" in instruction_lower:
+                query_type = "market_summary"
+            else:
+                query_type = "generic"
+            
+            self.market_query_handler.handle_query(
+                instruction, query_type,
+                symbol_extractor=self._extract_symbol_from_instruction
+            )
                 
         except Exception as e:
             logger.error(f"Market chat query failed: {e}", exc_info=True)
