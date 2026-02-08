@@ -1,0 +1,152 @@
+# Agent Configuration - Phase-2C
+# Controls LLM integration, planner behavior, browser, file operations, observations, and vision
+
+version: 2.2
+agent_id: local_desktop_agent_01
+
+# Planner Configuration
+planner:
+  use_llm: true  # Now enabled - llama3.2 is available!
+  mode: "llm"  # "deterministic" or "llm"
+  max_actions_per_plan: 15  # Increased to allow complex workflows (e.g. save-as dialogs)
+
+# LLM Configuration (only used if use_llm: true)
+llm:
+  provider: "ollama"  # Only ollama supported
+  base_url: "http://localhost:11434"  # Default Ollama endpoint
+  model: "llama3.2"  # Default model (user can change)
+  temperature: 0.1  # Low temperature for deterministic planning
+  timeout: 30  # Request timeout in seconds
+  
+  # Safety constraints
+  max_tokens: 500  # Limit response length
+  strict_parsing: true  # Reject malformed outputs
+  
+# Fallback behavior
+fallback:
+  on_llm_failure: "abort"  # "abort" or "deterministic"
+  notify_user: true  # Show error message in UI
+
+# Browser Configuration (Phase-2A)
+browser:
+  enabled: true
+  headless: false  # Set to true for headless mode
+  default_timeout: 30000  # Page load timeout in ms
+  
+  # Option 1: Connect to existing browser with remote debugging (recommended)
+  # Run: start_edge_with_debugging.bat first, then start agent
+  use_existing_browser: false  # Set to true to use existing Edge
+  cdp_url: "http://localhost:9222"  # CDP endpoint
+  
+  # Option 2: Use separate profile (simple, no conflicts)
+  use_personal_profile: true  # Use dedicated profile for agent
+  profile_path: "C:/Users/amanu/AppData/Local/AgentBrowser"  # Separate profile
+  
+  # Option 3: Fresh session (no login, CAPTCHA possible)
+  # Set both above to false for anonymous browsing
+  
+# File Operations Configuration (Phase-2A)
+file:
+  enabled: true
+  workspace: "C:/Users/amanu/OneDrive/Documents/AgentWorkspace"  # Absolute path only
+  max_file_size_kb: 1024  # Max file size for read operations (1MB)
+
+# Control Primitives Configuration (Phase-4A)
+control:
+  max_wait_duration: 30  # Maximum allowed wait duration in seconds
+
+# Plan Approval Configuration (Phase-5A)
+plan_approval:
+  enabled: true  # Enable approval gates before execution
+  
+  # Rules for which actions require approval (action type level)
+
+# Unsaved Changes Handling (Phase-5B)
+unsaved_changes:
+  default_action: "ask"  # "ask", "save", "discard", "fail"
+  require_confirmation: true
+
+  # Only applies to Actions, never Observations
+  require_approval_for:
+    - launch_app  # Always require approval before launching apps
+    - close_app   # Always require approval before closing apps
+  
+  # Approval mode (Phase-5A: batch only)
+  approval_mode: "batch"  # "batch" = single approval for entire plan
+  
+  # Preview settings
+  show_preview: true  # Always show plan preview before execution
+  preview_format: "tree"  # "tree" = structured tree visualization
+
+# Observation Configuration (Phase-2B)
+observation:
+  enabled: true
+  types:  # Supported observation types
+    - read_text  # Extract text from elements/files
+    - query_element  # Check element existence/visibility
+    - observe_dom  # Read DOM elements (Phase-2B Market Analysis)
+    - observe_vision  # Read screen via vision (Phase-2B Market Analysis)
+  # Observations bypass policy checks
+  # Observations never trigger retries
+  # Observations logged separately from actions
+
+# Market Analysis Configuration (Phase-2B)
+market_analysis:
+  enabled: true
+  mode: "read_only"  # STRICTLY read-only analysis
+  
+  # TradingView Integration
+  tradingview:
+    base_url: "https://www.tradingview.com"
+    default_timeframe: "1D"  # Default chart timeframe
+    chart_load_timeout: 15  # Seconds to wait for chart load
+  
+  # Authority Hierarchy (Golden Rule)
+  authority:
+    # Vision proposes → DOM validates → LLM reasons
+    primary: "DOM"  # DOM is authoritative for prices, indicators, timeframe
+    fallback: "VISION"  # Vision for trend/support/resistance (advisory)
+  
+  # Safety Constraints (NON-NEGOTIABLE)
+  safety:
+    allow_chart_drawing: false  # No trendlines, Fibonacci, markers
+    allow_trading: false  # No buy/sell execution
+    allow_coordinate_clicks: false  # No canvas clicks
+    allow_chart_manipulation: false  # No chart modification
+  
+  # Output Format
+  output:
+    format: "json"  # Always return structured JSON
+    include_disclaimer: true  # Always include risk disclaimer
+
+# Vision Configuration (Phase-2C/3B/4B)
+vision:
+  enabled: true  # Will enable when llava:7b download completes
+  provider: "ollama"  # Only ollama supported
+  base_url: "http://localhost:11434"
+  model: "llava:7b"  # Smaller vision model (4.1GB vs 7.8GB)
+  timeout: 60  # VLMs are slower than text LLMs
+  
+  # Phase-4B: Vision used ONLY by Critic for verification fallback
+  # Vision triggered ONLY when DOM/UIA/FILE verification fails
+  # Vision NEVER influences planner, controller, or policy
+  # Vision NEVER executes actions or suggests targets
+  
+  # Authority hierarchy (Critic verification only):
+  # 1. DOM (web elements) - confidence 1.0
+  # 2. UIA (desktop elements) - confidence 1.0
+  # 3. FILE (file system) - confidence 1.0
+  # 4. VISION (fallback only) - confidence 0.7
+  
+  verification_confidence: 0.7  # Fixed confidence for vision-based verification
+  
+  # Phase-2C/3A constraints (observation layer - not used in Phase-4B)
+  authority_level: 4  # Lowest priority
+  observation_only: true  # Vision NEVER triggers actions
+  fallback_only: true  # Only used when primary sources fail
+  
+  # Supported vision observation types (Phase-2C/3A - not used in Phase-4B)
+  types:
+    - describe_screen  # General screen description
+    - find_element  # Advisory element search (NOT for clicking)
+    - read_text  # OCR fallback when UIA/DOM fail

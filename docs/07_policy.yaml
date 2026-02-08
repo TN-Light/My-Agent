@@ -1,0 +1,46 @@
+# 07_policy.yaml
+# THIS IS IMMUTABLE LAW. The agent cannot modify this file.
+
+version: 1.0
+agent_id: local_desktop_agent_01
+
+# Financial & Transactional Rules
+trading:
+  enabled: true
+  require_confirmation: true # Popup must appear for every trade
+  max_order_value_inr: 5000
+  allowed_platforms:
+    - "zerodha.com"
+    - "kite.zerodha.com"
+    - "Kite Desktop"
+
+shopping:
+  enabled: true
+  require_confirmation: true
+  max_item_price_inr: 2000
+  restricted_categories: [ "Gift Cards", "Digital Subscriptions" ]
+  allowed_domains: [ "amazon.in", "flipkart.com" ]
+
+# System & File Level Rules
+filesystem:
+  allow_delete: false
+  restricted_paths:
+    - "C:/Windows"
+    - "C:/Users/*/AppData"
+  allowed_workspace: "C:/Users/*/Documents/AgentWorkspace"
+
+# Application Control
+apps:
+  whitelist:
+    - "code.exe"          # VS Code
+    - "chrome.exe"        # Google Chrome
+    - "windowsterminal.exe"
+    - "python.exe"
+  blacklist:
+    - "control.exe"       # Control Panel
+    - "regedit.exe"       # Registry Editor
+
+# Privacy Rules
+privacy:
+  mask_passwords: true     # Use OCR to detect 'password' fields and blur them
+  logging_level: "audit"   # Log actions but not sensitive screen content

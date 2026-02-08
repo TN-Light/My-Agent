@@ -1,0 +1,40 @@
+# =============================================================================
+# My Agent - Python Dependencies
+# =============================================================================
+# Install: pip install -r requirements.txt
+# Note: Some packages are Windows-only (pywinauto, pywin32)
+# =============================================================================
+
+# --- Qt UI Framework ---
+PySide6>=6.5.0
+
+# --- Windows UI Automation ---
+pywinauto>=0.6.8; sys_platform == "win32"
+
+# --- Browser Automation ---
+playwright>=1.40.0
+
+# --- HTTP Client (Ollama LLM integration) ---
+requests>=2.28.0
+
+# --- Image Processing ---
+Pillow>=9.0.0
+
+# --- Process Utilities ---
+psutil>=5.9.0
+
+# --- YAML Config Parsing ---
+PyYAML>=6.0
+
+# --- Vector Database (Market Memory) ---
+chromadb>=0.4.0
+
+# --- Keyboard Input ---
+keyboard>=0.13.5
+
+# --- Windows API Bindings ---
+pywin32>=305; sys_platform == "win32"
+
+# --- Testing ---
+pytest>=7.0.0
+pytest-cov>=4.0.0

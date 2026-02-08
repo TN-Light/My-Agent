@@ -1,0 +1,82 @@
+# 07_policy.yaml
+# THIS IS IMMUTABLE LAW. The agent cannot modify this file.
+
+version: 1.0
+agent_id: local_desktop_agent_01
+
+# Financial & Transactional Rules
+trading:
+  enabled: true
+  require_confirmation: true # Popup must appear for every trade
+  max_order_value_inr: 5000
+  allowed_platforms:
+    - "zerodha.com"
+    - "kite.zerodha.com"
+    - "Kite Desktop"
+
+shopping:
+  enabled: true
+  require_confirmation: true
+  max_item_price_inr: 2000
+  restricted_categories: [ "Gift Cards", "Digital Subscriptions" ]
+  allowed_domains: [ "amazon.in", "flipkart.com" ]
+
+# System & File Level Rules
+filesystem:
+  allow_delete: false
+  restricted_paths:
+    - "C:/Windows"
+    - "C:/Users/*/AppData"
+  allowed_workspace: "C:/Users/amanu/Documents/AgentWorkspace"  # Phase-2A: Must be absolute path
+
+# Browser & Web Access Rules (Phase-2A)
+browser:
+  enabled: true
+  allowed_domains:
+    - "google.com"
+    - "*.google.com"
+    - "example.com"
+    - "httpbin.org"  # For testing
+    - "amazon.in"    # Shopping (future)
+    - "flipkart.com" # Shopping (future)
+    - "zerodha.com"  # Trading (future)
+    - "kite.zerodha.com"  # Trading (future)
+    - "tradingview.com"  # Phase-2B: Market analysis (read-only)
+    - "*.tradingview.com"  # Phase-2B: Market analysis subdomains
+  blocked_domains:
+    - "malicious-site.com"
+  require_https: false  # Set to true for production
+
+# Market Analysis Configuration (Phase-2B)
+market_analysis:
+  enabled: true
+  mode: "read_only"  # MUST be read_only - no other modes allowed
+  
+  # SAFETY CONSTRAINTS (NON-NEGOTIABLE)
+  safety:
+    allow_chart_drawing: false      # NO trendlines, Fibonacci, markers
+    allow_trading: false             # NO buy/sell execution
+    allow_coordinate_clicks: false   # NO canvas clicks
+    allow_chart_manipulation: false  # NO chart modification
+  
+  # Only observation actions allowed
+  allowed_actions:
+    - "observe_dom"
+    - "observe_vision"
+
+# Application Control
+apps:
+  whitelist:
+    - "code.exe"          # VS Code
+    - "chrome.exe"        # Google Chrome
+    - "windowsterminal.exe"
+    - "python.exe"
+    - "notepad.exe"       # Phase-0: Added for demo
+  blacklist:
+    - "control.exe"       # Control Panel
+    - "regedit.exe"       # Registry Editor
+
+# Privacy Rules
+privacy:
+  mask_passwords: true     # Use OCR to detect 'password' fields and blur them
+  logging_level: "audit"   # Log actions but not sensitive screen content
