@@ -163,6 +163,19 @@ class ExecutionEngine:
         except Exception as e:
             logger.warning(f"Symbol Resolver initialization failed: {e}")
         
+        # Phase-14: News/Catalyst Intelligence
+        self.news_client = None
+        try:
+            from perception.news_client import NewsClient
+            _browser = getattr(self.controller, 'browser_handler', None) if self.controller else None
+            self.news_client = NewsClient(
+                browser_handler=_browser,
+                llm_client=self.llm_client
+            )
+            logger.info("Phase-14: News/Catalyst client initialized")
+        except Exception as e:
+            logger.warning(f"News client initialization failed: {e}")
+        
         # Phase-2B: TradingView client (singleton per agent lifetime)
         self.tradingview_client = None
         
@@ -1759,6 +1772,37 @@ class ExecutionEngine:
                     regime_flags_set = set()
                     # TODO: Add regime_flags_set.add("REGIME_CHANGE") when market memory detects it
                     # TODO: Add regime_flags_set.add("EDGE_DEGRADATION") when edge tracking detects it
+                    
+                    # Phase-14: Fetch news/catalysts before final verdict
+                    catalyst_report = None
+                    if self.news_client:
+                        try:
+                            # Ensure browser_handler is current (lazy init)
+                            if not self.news_client.browser_handler and self.controller:
+                                self.news_client.browser_handler = getattr(self.controller, 'browser_handler', None)
+                            if self.chat_ui:
+                                self.chat_ui.log("", "INFO")
+                                self.chat_ui.log("Fetching news & catalysts...", "INFO")
+                            catalyst_report = self.news_client.get_catalyst_report(symbol)
+                            if catalyst_report and catalyst_report.news_items:
+                                display_text = self.news_client.format_for_display(catalyst_report)
+                                if self.chat_ui:
+                                    for line in display_text.split('\n'):
+                                        if any(kw in line for kw in ("BULLISH", "OPPORTUNITY", "++", "strong")):
+                                            self.chat_ui.log(line, "SUCCESS")
+                                        elif any(kw in line for kw in ("BEARISH", "RISK", "--", "weak", "deteriorating")):
+                                            self.chat_ui.log(line, "ERROR")
+                                        elif any(kw in line for kw in ("===", "---", "NEWS &")):
+                                            self.chat_ui.log(line, "INFO")
+                                        else:
+                                            self.chat_ui.log(line, "INFO")
+                                print(display_text)
+                                logger.info(f"Phase-14: Catalyst report for {symbol}: sentiment={catalyst_report.overall_sentiment}")
+                            else:
+                                if self.chat_ui:
+                                    self.chat_ui.log("No significant news catalysts found.", "INFO")
+                        except Exception as news_err:
+                            logger.warning(f"Phase-14 news fetch failed: {news_err}")
                     
                     # Generate human-friendly summary (STRICT API)
                     summary = self.human_summary.generate(

@@ -204,10 +204,29 @@ class ScreenCapture:
     def capture_window_handle(self, hwnd: int) -> tuple[Optional[Image.Image], str]:
         """
         Capture a specific window by handle (Phase-10E).
+        Restores minimized windows before capture to avoid tiny screenshots.
         Returns: (image, window_title)
         """
         try:
             title = win32gui.GetWindowText(hwnd)
+            
+            # Restore window if minimized — GetWindowRect returns tiny rect for minimized windows
+            if win32gui.IsIconic(hwnd):
+                logger.info(f"Window '{title}' is minimized — restoring before capture")
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                import time
+                time.sleep(0.5)  # Wait for window to restore
+            
+            # Validate window dimensions before capture
+            left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+            width = right - left
+            height = bottom - top
+            if width < 200 or height < 200:
+                logger.warning(f"Window '{title}' too small ({width}x{height}) — attempting restore")
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                import time
+                time.sleep(0.5)
+            
             logger.info(f"Phase-10E: Capturing specific window: '{title}'")
             return self._capture_window_printwindow(hwnd), title
         except Exception as e:

@@ -493,8 +493,26 @@ class Observer:
                         res = self.screen_capture.capture_window_handle(hwnd)
                         screenshot, window_title = unpack_capture(res)
 
-                elif "browser" in prompt_lower or "edge" in prompt_lower:
-                    hwnd = self.screen_capture.find_window_by_title("Edge")
+                elif any(kw in prompt_lower for kw in ("browser", "edge", "chart", "tradingview",
+                                                        "stock", "support/resistance", "momentum",
+                                                        "trend", "candlestick", "price")):
+                    # Chart analysis keywords → find the TradingView browser window
+                    # Priority: 1) Window with symbol in title, 2) TradingView, 3) Any Edge/Chrome
+                    hwnd = None
+                    
+                    # Extract symbol from observation target (e.g., "Analyze TATACHEM chart...")
+                    import re
+                    symbol_match = re.search(r'Analyze\s+(\S+)\s+chart', observation.target or "", re.IGNORECASE)
+                    if symbol_match:
+                        symbol_in_target = symbol_match.group(1)
+                        hwnd = self.screen_capture.find_window_by_title(symbol_in_target)
+                    
+                    if not hwnd:
+                        hwnd = self.screen_capture.find_window_by_title("TradingView")
+                    if not hwnd:
+                        hwnd = self.screen_capture.find_window_by_title("Edge")
+                    if not hwnd:
+                        hwnd = self.screen_capture.find_window_by_title("Chrome")
                     if hwnd: 
                         res = self.screen_capture.capture_window_handle(hwnd)
                         screenshot, window_title = unpack_capture(res)
@@ -566,6 +584,21 @@ class Observer:
                     # If we still have a full screenshot and target suggests code/editor
                     # We can try a "Center Focus" crop if UIA failed
                     # (Implementation deferred to avoid breaking generic cases, standard fallback is full screen)
+                
+                # Phase-14: Chart-Area Isolation
+                # When analyzing charts, crop browser chrome (tabs, address bar, bookmarks)
+                # to give the VLM a cleaner chart-only image
+                chart_keywords = ("chart", "support/resistance", "momentum", "trend", "candlestick")
+                if any(kw in prompt_lower for kw in chart_keywords) and screenshot:
+                    w, h = screenshot.size
+                    # Browser chrome is typically 100-140px at the top (title bar + tabs + address/bookmarks)
+                    # TradingView toolbar at bottom is ~30px
+                    # Only crop if image is large enough to have meaningful chrome
+                    if h > 400:
+                        chrome_top = int(h * 0.12)    # ~12% top = browser chrome
+                        chrome_bottom = int(h * 0.97)  # ~3% bottom = status bar
+                        screenshot = screenshot.crop((0, chrome_top, w, chrome_bottom))
+                        logger.info(f"Phase-14: Cropped browser chrome for chart analysis: {w}x{h} → {screenshot.size[0]}x{screenshot.size[1]}")
                 
                 # Phase-10: Use analyze_screen which returns structured dict
                 # observation.target is treated as the prompt/query

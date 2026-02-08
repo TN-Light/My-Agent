@@ -137,6 +137,9 @@ class Agent:
                     timeout=llm_config.get("timeout", 30)
                 )
                 logger.info("LLM client initialized")
+                
+                # Verify required models are available in Ollama
+                self._verify_ollama_models(llm_config)
             except Exception as e:
                 logger.error(f"Failed to initialize LLM client: {e}")
                 logger.warning("Falling back to deterministic planner")
@@ -261,6 +264,54 @@ class Agent:
         
         logger.info("All modules initialized successfully")
     
+    def _verify_ollama_models(self, llm_config: dict):
+        """
+        Verify required Ollama models are pulled and available.
+        Auto-pulls missing models so the agent never fails silently.
+        """
+        import subprocess
+        
+        base_url = llm_config.get("base_url", "http://localhost:11434")
+        required_models = [
+            llm_config.get("model", "llama3.2"),
+        ]
+        
+        # Also check vision model from config
+        vision_config = self.config.get("vision", {})
+        vision_model = vision_config.get("model", "llava:7b")
+        if vision_model:
+            required_models.append(vision_model)
+        
+        try:
+            import requests
+            resp = requests.get(f"{base_url}/api/tags", timeout=5)
+            available = {m["name"] for m in resp.json().get("models", [])}
+        except Exception as e:
+            logger.warning(f"Could not check Ollama models: {e}")
+            return
+        
+        for model in required_models:
+            # Check exact name or name:latest
+            if model in available or f"{model}:latest" in available:
+                logger.info(f"Ollama model '{model}' is available")
+                continue
+            
+            logger.warning(f"Ollama model '{model}' NOT FOUND — pulling now...")
+            try:
+                result = subprocess.run(
+                    ["ollama", "pull", model],
+                    capture_output=True, text=True, timeout=600
+                )
+                if result.returncode == 0:
+                    logger.info(f"Successfully pulled '{model}'")
+                else:
+                    logger.error(f"Failed to pull '{model}': {result.stderr.strip()}")
+            except subprocess.TimeoutExpired:
+                logger.error(f"Timeout pulling '{model}' (10 min limit)")
+            except FileNotFoundError:
+                logger.error("'ollama' command not found — is Ollama installed?")
+                break
+
     def _load_config(self) -> dict:
         """
         Load agent configuration from YAML with pydantic validation.
