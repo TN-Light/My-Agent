@@ -1010,6 +1010,16 @@ class ExecutionEngine:
                     line += f" | Vol: {vol_trend}"
                 if candle_pat and candle_pat.lower() not in ("none", ""):
                     line += f" | Pattern: {candle_pat}"
+                
+                # Phase-16: Show perception confidence and conflicts
+                p_conf = tf_analysis.get("_perception_confidence")
+                p_conflicts = tf_analysis.get("_perception_conflicts", 0)
+                if p_conf is not None:
+                    conf_label = "HIGH" if p_conf >= 0.75 else "MED" if p_conf >= 0.50 else "LOW"
+                    line += f" [P:{conf_label}]"
+                    if p_conflicts > 0:
+                        line += f" [{p_conflicts} conflict{'s' if p_conflicts > 1 else ''}]"
+                
                 self.chat_ui.log(line, "INFO")
             
             self.chat_ui.log("", "INFO")

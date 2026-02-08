@@ -1,8 +1,12 @@
 """
-Technical Analyzer - Phase-2B Market Analysis
+Technical Analyzer - Phase-2B/16 Market Analysis
 LLM-based technical analysis synthesis using DOM + Vision observations.
 
-GOLDEN RULE: Vision proposes → DOM validates → LLM reasons
+Phase-16: DOM/VLM Perception Reconciliation
+  Before LLM synthesis, DOM and VLM are reconciled through trust-weighted fusion.
+  Conflicts are detected, scored, and resolved before the LLM sees the data.
+
+GOLDEN RULE: Vision proposes → Reconciler scores → DOM validates → LLM reasons
 
 Output: Structured JSON analysis (trend, support/resistance, momentum, bias)
 """
@@ -10,6 +14,12 @@ import logging
 import json
 from typing import Dict, Any, Optional, List
 from logic.llm_client import LLMClient
+
+try:
+    from logic.perception_reconciler import PerceptionReconciler, ReconciliationReport
+    _reconciler_available = True
+except ImportError:
+    _reconciler_available = False
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +48,11 @@ class TechnicalAnalyzer:
         self.output_config = self.ma_config.get("output", {})
         self.market_store = market_store
         
+        # Phase-16: Perception Reconciler
+        self.reconciler = PerceptionReconciler() if _reconciler_available else None
+        if self.reconciler:
+            logger.info("Phase-16: Perception Reconciler enabled")
+        
         logger.info("TechnicalAnalyzer initialized")
     
     def analyze(
@@ -58,8 +73,13 @@ class TechnicalAnalyzer:
         logger.info(f"Analyzing chart data for {dom_data.get('symbol', 'Unknown')}")
         
         try:
-            # Build analysis prompt
-            prompt = self._build_analysis_prompt(dom_data, vision_observation)
+            # Phase-16: Reconcile DOM + VLM before LLM synthesis
+            reconciliation = None
+            if self.reconciler:
+                reconciliation = self.reconciler.reconcile(dom_data, vision_observation)
+            
+            # Build analysis prompt with reconciled data
+            prompt = self._build_analysis_prompt(dom_data, vision_observation, reconciliation)
             
             # Get LLM analysis using generate_completion (not plan)
             llm_response = self.llm_client.generate_completion(
@@ -96,6 +116,14 @@ class TechnicalAnalyzer:
                 except Exception as e:
                     logger.error(f"Failed to store analysis: {e}")
             
+            # Phase-16: Attach reconciliation metadata to analysis
+            if reconciliation:
+                analysis["_perception_confidence"] = reconciliation.overall_confidence
+                analysis["_perception_completeness"] = reconciliation.completeness
+                analysis["_perception_conflicts"] = len(reconciliation.conflicts)
+                if reconciliation.has_critical_conflicts():
+                    analysis["_critical_conflict"] = True
+            
             logger.info(f"[OK] Analysis complete: {analysis.get('symbol')}")
             return analysis
             
@@ -110,7 +138,8 @@ class TechnicalAnalyzer:
     def _build_analysis_prompt(
         self,
         dom_data: Dict[str, Any],
-        vision_observation: Optional[str]
+        vision_observation: Optional[str],
+        reconciliation: Optional['ReconciliationReport'] = None
     ) -> str:
         """
         Build LLM prompt for technical analysis.
@@ -153,6 +182,18 @@ CHART DATA (DOM - AUTHORITATIVE):
         # Add vision observation if available
         if vision_observation:
             prompt += f"\nVISION OBSERVATION (ADVISORY - use to identify patterns, levels, candles):\n{vision_observation}\n"
+        
+        # Phase-16: Add reconciliation report if available
+        if reconciliation:
+            prompt += f"\n--- PERCEPTION RECONCILIATION (Phase-16) ---\n"
+            prompt += reconciliation.evidence_brief
+            prompt += "\n"
+            if reconciliation.conflicts:
+                prompt += "\n" + reconciliation.conflict_brief + "\n"
+            prompt += f"\nIMPORTANT: The reconciliation above resolves conflicts between DOM and VLM.\n"
+            prompt += f"Use the trust-weighted facts above as your PRIMARY input. Where trust=HIGH, treat as fact.\n"
+            prompt += f"Where trust=LOW (e.g., VLM-read price levels), verify against other evidence.\n"
+            prompt += f"--- END RECONCILIATION ---\n"
         
         prompt += f"""
 TASK:
