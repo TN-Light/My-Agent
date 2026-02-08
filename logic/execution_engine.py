@@ -192,6 +192,22 @@ class ExecutionEngine:
         except Exception as e:
             logger.warning(f"Phase-B initialization failed: {e}")
         
+        # Phase-E: Prediction Feedback Loop
+        self.prediction_store = None
+        self.outcome_resolver = None
+        self.feedback_reporter = None
+        try:
+            from logic.prediction_feedback import PredictionStore, OutcomeResolver, FeedbackReporter
+            self.prediction_store = PredictionStore()
+            self.outcome_resolver = OutcomeResolver(
+                prediction_store=self.prediction_store,
+                scenario_resolution_store=self.resolution_store
+            )
+            self.feedback_reporter = FeedbackReporter(self.prediction_store)
+            logger.info("Phase-E: Prediction Feedback Loop initialized")
+        except Exception as e:
+            logger.warning(f"Phase-E initialization failed: {e}")
+        
         # Phase-2B: TradingView client (singleton per agent lifetime)
         self.tradingview_client = None
         
@@ -411,6 +427,18 @@ class ExecutionEngine:
                                      f"{mtf_regime_context.trend_duration_days}d)", "INFO")
             except Exception as regime_err:
                 logger.warning(f"Phase-B regime detection failed: {regime_err}")
+        
+        # Phase-E: Resolve any pending predictions before new analysis
+        if self.outcome_resolver:
+            try:
+                resolutions = self.outcome_resolver.check_and_resolve_pending()
+                if resolutions:
+                    logger.info(f"Phase-E: Resolved {len(resolutions)} pending predictions")
+                    if self.chat_ui:
+                        correct = sum(1 for r in resolutions if r.get("verdict_correct"))
+                        self.chat_ui.log(f"📊 Feedback: {correct}/{len(resolutions)} past predictions validated", "INFO")
+            except Exception as fb_err:
+                logger.warning(f"Phase-E: Pending resolution failed: {fb_err}")
         
         mtf_results = []
         
@@ -964,6 +992,28 @@ class ExecutionEngine:
                         htf_location=htf_location_str,
                         trend_state=trend_str
                     )
+                    
+                    # Phase-E: Record scanner prediction
+                    if self.prediction_store and summary:
+                        try:
+                            self.prediction_store.record_prediction(
+                                symbol=symbol,
+                                verdict=summary["verdict"],
+                                confidence=summary["confidence"],
+                                trend_prediction=trend_str,
+                                bias_text=summary.get("summary", ""),
+                                alignment_state=strict_alignment,
+                                active_scenario=active_state_str,
+                                regime=regime_ctx.regime.value if (self.regime_detector and regime_ctx) else "",
+                                price=current_price,
+                                support_levels=monthly_support + weekly_support,
+                                resistance_levels=monthly_resistance + weekly_resistance,
+                                htf_location=htf_location_str,
+                                regime_flags=regime_flags_set
+                            )
+                        except Exception as pred_err:
+                            logger.warning(f"[SCANNER] {symbol} prediction capture failed: {pred_err}")
+                    
                 except Exception as summary_err:
                     logger.warning(f"[SCANNER] {symbol} human summary failed: {summary_err}")
             
@@ -1178,6 +1228,7 @@ class ExecutionEngine:
             
             # PHASE-6A: CALCULATE DETERMINISTIC SCENARIO PROBABILITIES
             probability_result = None
+            analysis_id = None  # Phase-E: track for prediction capture
             if self.probability_calculator:
                 try:
                     probability_result = self.probability_calculator.calculate_probabilities(
@@ -1939,6 +1990,30 @@ class ExecutionEngine:
                         logger.warning(f"Phase-X UI display failed, using fallback: {ui_err}")
                     
                     logger.info(f"Phase-X: Human summary generated - Verdict={summary['verdict']}, Confidence={summary['confidence']}")
+                    
+                    # Phase-E: Record prediction for feedback loop
+                    if self.prediction_store:
+                        try:
+                            pred_id = self.prediction_store.record_prediction(
+                                symbol=symbol,
+                                verdict=summary["verdict"],
+                                confidence=summary["confidence"],
+                                trend_prediction=trend_str,
+                                bias_text=summary.get("summary", ""),
+                                alignment_state=strict_alignment,
+                                active_scenario=active_state_str,
+                                regime=mtf_regime_context.regime.value if mtf_regime_context else "",
+                                price=current_price,
+                                support_levels=monthly_support + weekly_support,
+                                resistance_levels=monthly_resistance + weekly_resistance,
+                                htf_location=htf_location_str,
+                                regime_flags=regime_flags_set,
+                                scenario_analysis_id=analysis_id
+                            )
+                            if pred_id > 0:
+                                logger.info(f"Phase-E: Prediction #{pred_id} recorded for {symbol}")
+                        except Exception as pred_err:
+                            logger.warning(f"Phase-E: Prediction capture failed: {pred_err}")
                     
                     # Phase-11: Evaluate signal eligibility
                     if self.signal_eligibility:
