@@ -82,6 +82,9 @@ class LLMClient:
         """
         Call Ollama API to generate text with retry logic and exponential backoff.
         
+        Uses /api/chat with proper message role separation for better
+        instruction-following and JSON output quality.
+        
         Args:
             system_prompt: System prompt
             user_prompt: User prompt
@@ -93,15 +96,18 @@ class LLMClient:
         Raises:
             ConnectionError: If all retry attempts fail
         """
-        url = f"{self.base_url}/api/generate"
+        url = f"{self.base_url}/api/chat"
         
         payload = {
             "model": self.model,
-            "prompt": f"{system_prompt}\n\n{user_prompt}",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
             "stream": False,
             "options": {
                 "temperature": self.temperature,
-                "num_predict": 1000  # Max tokens
+                "num_predict": 2000  # Increased for detailed chart analysis JSON
             }
         }
         
@@ -115,6 +121,10 @@ class LLMClient:
                 result = response.json()
                 if attempt > 1:
                     logger.info(f"LLM request succeeded on attempt {attempt}")
+                # /api/chat returns message.content, /api/generate returns response
+                message = result.get("message", {})
+                if isinstance(message, dict):
+                    return message.get("content", "").strip()
                 return result.get("response", "").strip()
                 
             except requests.exceptions.ConnectionError as e:

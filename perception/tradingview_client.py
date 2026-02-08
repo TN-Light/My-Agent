@@ -120,12 +120,15 @@ class TradingViewClient:
             
             # Extract all data in worker thread
             def _extract(page):
+                import re
                 data = {
                     "symbol": None,
                     "price": None,
                     "change": None,
                     "timeframe": default_timeframe,  # Default to requested timeframe
-                    "indicators": {}
+                    "indicators": {},
+                    "volume": None,
+                    "volume_change": None
                 }
                 
                 # Wait for chart to fully load
@@ -190,6 +193,93 @@ class TradingViewClient:
                                 data["symbol"] = value.split(":")[-1]
                     except Exception:
                         pass  # Symbol input may not be present
+                
+                # ─── Phase-15: Enhanced DOM Extraction ─────────────────────
+                # Extract indicator values from chart legend area
+                try:
+                    legend_items = page.locator("div[data-name='legend-source-item']").all()
+                    for item in legend_items:
+                        try:
+                            item_text = item.text_content(timeout=1000)
+                            if not item_text:
+                                continue
+                            item_text = item_text.strip()
+                            text_lower = item_text.lower()
+                            
+                            # Moving Averages: "EMA (20) 1,450.25" or "SMA (50) 1,420.00"
+                            if any(ma in text_lower for ma in ('ema', 'sma', 'wma')):
+                                ma_match = re.search(r'(e?s?w?ma)\s*\(?\s*(\d+)\s*\)?\D*([\d,]+\.?\d*)', item_text, re.IGNORECASE)
+                                if ma_match:
+                                    ma_type = ma_match.group(1).upper()
+                                    ma_period = ma_match.group(2)
+                                    ma_value = ma_match.group(3).replace(',', '')
+                                    data["indicators"][f"{ma_type}({ma_period})"] = ma_value
+                            
+                            # RSI: "RSI (14) 65.32"
+                            elif 'rsi' in text_lower:
+                                rsi_match = re.search(r'rsi\D*(\d+)\D*([\d.]+)', item_text, re.IGNORECASE)
+                                if rsi_match:
+                                    data["indicators"][f"RSI({rsi_match.group(1)})"] = rsi_match.group(2)
+                            
+                            # MACD
+                            elif 'macd' in text_lower:
+                                macd_match = re.search(r'macd\D*([-\d,.]+)', item_text, re.IGNORECASE)
+                                if macd_match:
+                                    data["indicators"]["MACD"] = macd_match.group(1).replace(',', '')
+                            
+                            # Volume from legend
+                            elif 'vol' in text_lower and not data["volume"]:
+                                vol_match = re.search(r'([\d,]+\.?\d*)\s*([KMB]?)', item_text)
+                                if vol_match:
+                                    data["volume"] = vol_match.group(1).replace(',', '') + vol_match.group(2)
+                                    
+                        except Exception:
+                            continue
+                            
+                except Exception as e:
+                    logger.debug(f"Indicator extraction from legend: {e}")
+                
+                # Extract OHLC values from the chart header/series legend
+                try:
+                    ohlc_selectors = [
+                        "div[data-name='legend-series-item']",
+                        "div[class*='valuesWrapper']"
+                    ]
+                    for selector in ohlc_selectors:
+                        try:
+                            ohlc_el = page.locator(selector).first
+                            ohlc_text = ohlc_el.text_content(timeout=1500)
+                            if ohlc_text and any(c.isdigit() for c in ohlc_text):
+                                numbers = re.findall(r'[\d,]+\.?\d+', ohlc_text)
+                                if len(numbers) >= 4:
+                                    data["indicators"]["Open"] = numbers[0].replace(',', '')
+                                    data["indicators"]["High"] = numbers[1].replace(',', '')
+                                    data["indicators"]["Low"] = numbers[2].replace(',', '')
+                                    data["indicators"]["Close"] = numbers[3].replace(',', '')
+                                if len(numbers) >= 5 and not data["volume"]:
+                                    data["volume"] = numbers[4].replace(',', '')
+                                break
+                        except Exception:
+                            continue
+                except Exception as e:
+                    logger.debug(f"OHLC extraction: {e}")
+                
+                # Volume from dedicated volume panel
+                if not data["volume"]:
+                    try:
+                        vol_el = page.locator("div[data-name='legend-source-item']:has-text('Vol')").first
+                        vol_text = vol_el.text_content(timeout=1500)
+                        if vol_text:
+                            vol_match = re.search(r'([\d,]+\.?\d*)\s*([KMB]?)', vol_text)
+                            if vol_match:
+                                data["volume"] = vol_match.group(1).replace(',', '') + vol_match.group(2)
+                    except Exception:
+                        pass
+                
+                if data.get("indicators"):
+                    logger.info(f"Phase-15: Extracted indicators from DOM: {list(data['indicators'].keys())}")
+                if data.get("volume"):
+                    logger.info(f"Phase-15: Volume from DOM: {data['volume']}")
                 
                 return data
             

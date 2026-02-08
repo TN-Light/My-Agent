@@ -681,10 +681,13 @@ class ExecutionEngine:
                 return None
             
             # Get vision observation
+            # Pass timeframe into observation target so VLM prompt can reference it
+            tf_label_map = {"1M": "Monthly", "1W": "Weekly", "1D": "Daily", "60": "Hourly", "4h": "4-Hour", "15": "15-Minute"}
+            tf_label = tf_label_map.get(timeframe, timeframe)
             observation = Observation(
                 observation_type="vision",
                 context="vision",
-                target=f"Analyze {symbol} chart for trend, support/resistance, and momentum"
+                target=f"Analyze {symbol} {tf_label} chart for trend, support/resistance, momentum, volume, and candlestick patterns"
             )
             
             vision_result = self.observer.observe(observation)
@@ -990,9 +993,25 @@ class ExecutionEngine:
             
             # 1. TIMEFRAME SUMMARY
             self.chat_ui.log("**1. TIMEFRAME SUMMARY**\n", "INFO")
-            self.chat_ui.log(f"  • **Monthly:** {monthly_trend} / {monthly_structure} / {monthly_momentum}", "INFO")
-            self.chat_ui.log(f"  • **Weekly:** {weekly_trend} / {weekly_structure} / {weekly_momentum}", "INFO")
-            self.chat_ui.log(f"  • **Daily:** {daily_trend} / {daily_structure} / {daily_momentum}", "INFO")
+            
+            # Phase-15: Enhanced display with volume and candlestick info
+            for tf_label, tf_analysis in [("Monthly", monthly_analysis), ("Weekly", weekly_analysis), ("Daily", daily_analysis)]:
+                trend_val = tf_analysis.get("trend", "unknown")
+                struct_val = tf_analysis.get("structure", "unknown")
+                mom_val = tf_analysis.get("momentum", "unknown")
+                mom_cond = tf_analysis.get("momentum_condition", "")
+                vol_trend = tf_analysis.get("volume_trend", "")
+                candle_pat = tf_analysis.get("candlestick_pattern", "")
+                
+                line = f"  * **{tf_label}:** {trend_val} / {struct_val} / {mom_val}"
+                if mom_cond and mom_cond != "neutral":
+                    line += f" ({mom_cond})"
+                if vol_trend and vol_trend not in ("unavailable", ""):
+                    line += f" | Vol: {vol_trend}"
+                if candle_pat and candle_pat.lower() not in ("none", ""):
+                    line += f" | Pattern: {candle_pat}"
+                self.chat_ui.log(line, "INFO")
+            
             self.chat_ui.log("", "INFO")
             
             # 2. ALIGNMENT STATUS

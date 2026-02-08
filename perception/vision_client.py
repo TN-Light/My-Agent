@@ -228,22 +228,62 @@ class VisionClient:
                             "trend" in str(target).lower() or
                             analysis_type == "chart_technical")
         
+        # Extract timeframe from target string for context
+        tf_label = "unknown"
+        target_lower = str(target).lower()
+        if "monthly" in target_lower or "1m" in target_lower:
+            tf_label = "Monthly"
+        elif "weekly" in target_lower or "1w" in target_lower:
+            tf_label = "Weekly"
+        elif "daily" in target_lower or "1d" in target_lower:
+            tf_label = "Daily"
+        elif "4h" in target_lower or "4 hour" in target_lower:
+            tf_label = "4-Hour"
+        elif "1h" in target_lower or "hourly" in target_lower:
+            tf_label = "Hourly"
+        
         if is_chart_analysis:
-            prompt = """Analyze this trading chart. Focus on:
+            prompt = f"""You are a professional chart analyst. Analyze this {tf_label} trading chart screenshot with precision.
 
-1. TREND DIRECTION: Is the price moving up (bullish), down (bearish), or sideways?
-2. SWING HIGHS/LOWS: Identify major peaks and troughs visible in the chart
-3. SUPPORT/RESISTANCE: What are the key price levels where price bounced or reversed?
-4. PATTERN: Describe any visible chart patterns (trend, consolidation, breakout, etc.)
+EXTRACT THE FOLLOWING (be specific with numbers):
+
+1. PRICE ACTION & TREND:
+   - Current trend direction (bullish / bearish / sideways)
+   - Is price making higher-highs & higher-lows, or lower-highs & lower-lows?
+   - How many candles are visible? Approximate how far back does the chart go?
+
+2. KEY PRICE LEVELS (read the Y-axis scale carefully):
+   - List ALL visible support levels where price bounced UP (exact numbers from chart)
+   - List ALL visible resistance levels where price reversed DOWN (exact numbers from chart)
+   - Which level is price closest to right now?
+   - Read the price scale on the right side of the chart carefully
+
+3. CANDLESTICK PATTERNS (last 3-5 candles):
+   - Describe the most recent candles: are they large/small body? Long wicks?
+   - Any recognizable patterns? (hammer, doji, engulfing, shooting star, pin bar, inside bar)
+   - Color of recent candles (green/red or bullish/bearish)
+
+4. VOLUME (if volume bars are visible at bottom):
+   - Is volume increasing or decreasing on recent candles?
+   - Any volume spikes? On which candles (bullish or bearish)?
+   - Compare recent volume to average visible volume
+
+5. INDICATORS (if any overlays or sub-charts are visible):
+   - Moving averages: read their values, is price above or below them?
+   - RSI/MACD/other oscillators: read their current values if visible
+   - Any divergence between price and indicators?
+
+6. CHART PATTERN:
+   - Any recognizable chart pattern? (channel, triangle, wedge, head-and-shoulders, double top/bottom, flag, cup-and-handle)
+   - Is price at a breakout/breakdown point?
 
 CRITICAL INSTRUCTIONS:
-- Focus ONLY on what is clearly visible in the chart
-- Provide approximate price levels for support/resistance if visible
-- Do NOT provide trading recommendations
-- Do NOT say "buy" or "sell"
-- This is ANALYSIS ONLY
-
-Describe what you see in clear, factual terms."""
+- Read the Y-axis price scale carefully and provide EXACT price numbers
+- This is a {tf_label} timeframe chart — each candle = one {tf_label.lower()} period
+- Focus ONLY on what is clearly visible
+- Do NOT say "buy" or "sell" — this is observation ONLY
+- If you cannot read a value clearly, say "unclear" rather than guessing
+- Provide numbers, not vague descriptions like 'higher' or 'lower'"""
         else:
             # Original prompt for general screen description
             prompt = (
@@ -480,15 +520,18 @@ Describe what you see in clear, factual terms."""
     
     def _call_ollama_vision(self, prompt: str, image_base64: str) -> Optional[str]:
         """
-        Call Ollama vision API.
+        Call Ollama vision API with retry logic.
+        
+        Retries up to 3 times with exponential backoff before falling back to OCR.
         
         Args:
             prompt: Text prompt
             image_base64: Base64-encoded image
             
         Returns:
-            VLM response text or None if request fails
+            VLM response text or None if all attempts fail
         """
+        import time as _time
         url = f"{self.base_url}/api/generate"
         
         payload = {
@@ -497,21 +540,42 @@ Describe what you see in clear, factual terms."""
             "images": [image_base64],
             "stream": False,
             "options": {
-                "temperature": 0.1  # Low temperature for deterministic output
+                "temperature": 0.1,  # Low temperature for deterministic output
+                "num_predict": 2000  # Allow longer responses for detailed chart analysis
             }
         }
         
-        try:
-            logger.info(f"Calling Ollama VLM: {self.model}")
-            response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"Calling Ollama VLM: {self.model} (attempt {attempt}/{max_retries})")
+                response = requests.post(url, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+                
+                result = response.json()
+                text = result.get("response", "").strip()
+                
+                # Validate response quality — reject very short or empty responses
+                if not text or len(text) < 50:
+                    logger.warning(f"VLM returned insufficient response ({len(text)} chars), retrying...")
+                    if attempt < max_retries:
+                        _time.sleep(2 ** (attempt - 1))  # 1s, 2s
+                        continue
+                
+                if attempt > 1:
+                    logger.info(f"VLM succeeded on attempt {attempt}")
+                return text
+                
+            except requests.exceptions.Timeout:
+                logger.error(f"Ollama VLM request timed out (attempt {attempt}/{max_retries})")
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Ollama VLM request failed (attempt {attempt}/{max_retries}): {e}")
             
-            result = response.json()
-            return result.get("response", "").strip()
-            
-        except requests.exceptions.Timeout:
-            logger.error("Ollama VLM request timed out")
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Ollama VLM request failed: {e}")
-            return None
+            # Exponential backoff: 1s, 2s
+            if attempt < max_retries:
+                backoff = 2 ** (attempt - 1)
+                logger.info(f"VLM retry in {backoff}s...")
+                _time.sleep(backoff)
+        
+        logger.error(f"VLM failed after {max_retries} attempts")
+        return None

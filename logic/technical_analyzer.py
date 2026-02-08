@@ -128,7 +128,7 @@ class TechnicalAnalyzer:
         timeframe = dom_data.get("timeframe", "1D")
         indicators = dom_data.get("indicators", {})
         
-        prompt = f"""You are a technical analysis expert. Analyze the following chart data and provide a structured assessment.
+        prompt = f"""You are a professional technical analyst. Synthesize the following DOM data and vision observation into a precise structural assessment.
 
 CHART DATA (DOM - AUTHORITATIVE):
 - Symbol: {symbol}
@@ -139,85 +139,65 @@ CHART DATA (DOM - AUTHORITATIVE):
         
         # Add indicators if available
         if indicators:
-            prompt += "\nINDICATORS:\n"
+            prompt += "\nINDICATORS (FROM DOM - AUTHORITATIVE):\n"
             for name, value in indicators.items():
                 prompt += f"- {name}: {value}\n"
+        else:
+            prompt += "\nINDICATORS: None available from DOM\n"
+        
+        # Add volume data
+        volume = dom_data.get("volume")
+        if volume:
+            prompt += f"\nVOLUME: {volume}\n"
         
         # Add vision observation if available
         if vision_observation:
-            prompt += f"\nVISION OBSERVATION (ADVISORY):\n{vision_observation}\n"
+            prompt += f"\nVISION OBSERVATION (ADVISORY - use to identify patterns, levels, candles):\n{vision_observation}\n"
         
-        prompt += """
+        prompt += f"""
 TASK:
-Provide precise technical analysis for market structure assessment.
-Analyze the chart data objectively with specific price levels and clear trend identification.
+Provide a precise technical analysis for {symbol} on the {timeframe} timeframe.
 
-Provide a technical analysis in the following JSON format:
+RULES FOR SUPPORT/RESISTANCE LEVELS:
+- If DOM provides OHLC (High/Low) data: use actual High as near resistance, actual Low as near support
+- If Vision reports specific price levels from the chart Y-axis: use those exact numbers
+- If indicators (EMA/SMA) are available: use their values as dynamic support/resistance
+- ONLY if NO data is available from DOM or Vision: estimate levels based on current price
+- ALL support levels MUST be BELOW current price
+- ALL resistance levels MUST be ABOVE current price
 
-{
-  "symbol": "<symbol>",
-  "timeframe": "<timeframe>",
-  "trend": "<bullish/bearish/sideways>",
+RULES FOR VOLUME:
+- If volume data is available, assess whether volume confirms the trend
+- "volume_trend": "increasing" (confirms trend), "decreasing" (weakening), "spike" (climax/breakout), "dry" (low interest)
+- If no volume data: set volume_trend to "unavailable"
+
+Respond ONLY with this JSON (no other text):
+
+{{
+  "symbol": "{symbol}",
+  "timeframe": "{timeframe}",
+  "trend": "<bullish|bearish|sideways>",
   "structure": "<higher-highs|lower-lows|range-bound|consolidation>",
-  "support": [<numeric_level1>, <numeric_level2>],
-  "resistance": [<numeric_level1>, <numeric_level2>],
+  "support": [<level_1>, <level_2>],
+  "resistance": [<level_1>, <level_2>],
   "momentum": "<strong bullish|moderate bullish|neutral|moderate bearish|strong bearish>",
   "momentum_condition": "<expanding|exhausting|improving|neutral>",
-  "reasoning": "<2-3 sentences explaining trend, structure, and levels>",
-  "bias": "<directional outlook and key levels to monitor>",
+  "volume_trend": "<increasing|decreasing|spike|dry|unavailable>",
+  "candlestick_pattern": "<pattern name or none>",
+  "reasoning": "<2-3 sentences: what the chart structure shows>",
+  "bias": "<directional outlook with specific levels to monitor>",
   "key_levels": "<critical price levels for validation or rejection>"
-}
-
-STRUCTURE DEFINITIONS:
-- "higher-highs": Uptrend with successive higher peaks and higher lows
-- "lower-lows": Downtrend with successive lower peaks and lower lows
-- "range-bound": Price oscillating between defined support/resistance
-- "consolidation": Sideways movement, preparing for breakout
-
-MOMENTUM CONDITION (REQUIRED):
-- "expanding": Strong momentum continuing to accelerate
-- "exhausting": Strong momentum showing signs of fatigue
-- "improving": Weak momentum starting to strengthen
-- "neutral": Momentum stable, no clear acceleration or deceleration
+}}
 
 CRITICAL LOGIC RULES:
-1. PRICE LOCATION CONSISTENCY:
-   - If price is "near support" → resistance MUST be ABOVE current price
-   - If price is "near resistance" → support MUST be BELOW current price
-   - Current level CANNOT act as both support and resistance simultaneously
-   
-2. PHASE-3/4 DISCIPLINE (NO TRADE LANGUAGE):
-   - NEVER use: "trade", "decision", "entry", "exit", "position"
-   - ONLY use: "monitor", "observe", "validate", "rejection", "watch"
-   - Example: "watch price behavior at 3150 for validation or rejection"
-   - NOT: "watch for trade decisions at 3150"
-
-3. Support/resistance levels MUST be precise numeric prices (e.g., [3150, 3100])
-   - Calculate support ~2-5% below current price based on chart structure
-   - Calculate resistance ~2-5% above current price based on chart structure
-   - Use round numbers and key psychological levels
-   - Support < Current Price < Resistance (strict ordering)
-
-4. Structure must accurately reflect price action patterns
-
-5. Reasoning should clearly explain the technical setup and market structure
-
-6. Bias should provide directional outlook (bullish/bearish/neutral) with levels to monitor
-
-7. Identify key levels where price behavior requires monitoring for validation/rejection
-
-8. Momentum MUST include both strength AND condition (e.g., "strong bullish" + "expanding")
-
-9. ALWAYS provide at least 2 support and 2 resistance levels as numbers
-
-10. Be precise and specific - this is Phase-3/4 structural analysis (NOT Phase-6 trading)
-
-OUTPUT FORMAT:
-- Use bullet points and numbered sections
-- Be concise and specific
-- Focus on structural assessment, not trading signals
-
-Respond ONLY with the JSON object, no additional text.
+1. Support levels MUST be numeric and BELOW current price ({price})
+2. Resistance levels MUST be numeric and ABOVE current price ({price})
+3. If RSI is available and > 70: momentum_condition should be "exhausting"
+4. If RSI is available and < 30: momentum_condition should be "improving"
+5. NEVER use words: "trade", "entry", "exit", "position", "buy", "sell"
+6. Use ONLY: "monitor", "observe", "validate", "watch"
+7. Momentum MUST have both strength AND condition
+8. Provide at least 2 support and 2 resistance levels as numbers
 """
         
         return prompt
@@ -272,6 +252,14 @@ Respond ONLY with the JSON object, no additional text.
                             analysis[field] = "range-bound"
                     else:
                         analysis[field] = "N/A"
+            
+            # Phase-15: Ensure new fields have defaults
+            if "volume_trend" not in analysis:
+                analysis["volume_trend"] = "unavailable"
+            if "candlestick_pattern" not in analysis:
+                analysis["candlestick_pattern"] = "none"
+            if "momentum_condition" not in analysis:
+                analysis["momentum_condition"] = "neutral"
             
             # Add price from DOM data for mean reversion checks
             if "price" not in analysis and dom_data.get("price"):
@@ -425,6 +413,9 @@ Respond ONLY with the JSON object, no additional text.
         support = analysis.get("support", [])
         resistance = analysis.get("resistance", [])
         momentum = analysis.get("momentum", "Unknown")
+        momentum_condition = analysis.get("momentum_condition", "neutral")
+        volume_trend = analysis.get("volume_trend", "unavailable")
+        candlestick_pattern = analysis.get("candlestick_pattern", "none")
         bias = analysis.get("bias", "")
         reasoning = analysis.get("reasoning", "")
         price = analysis.get("price", "N/A")
@@ -454,31 +445,25 @@ Respond ONLY with the JSON object, no additional text.
         # 2. Momentum
         lines.append("2. Momentum")
         if momentum:
-            # Parse momentum into strength and condition
-            momentum_lower = momentum.lower()
-            if "strong bullish" in momentum_lower or "strong bearish" in momentum_lower:
-                strength = "Strong"
-            elif "moderate" in momentum_lower:
-                strength = "Moderate"
-            else:
-                strength = "Weak/Neutral"
-            
-            if "overbought" in momentum_lower:
-                condition = "Overbought"
-            elif "oversold" in momentum_lower:
-                condition = "Oversold"
-            else:
-                condition = "Neutral"
-            
-            lines.append(f"   - Strength: {strength}")
-            lines.append(f"   - Condition: {condition}")
+            lines.append(f"   - Strength: {momentum.capitalize()}")
+            lines.append(f"   - Condition: {momentum_condition.capitalize()}")
         else:
             lines.append("   - Strength: Unknown")
             lines.append("   - Condition: Neutral")
         lines.append("")
         
-        # 3. Key Levels (use Rs instead of rupee symbol to avoid unicode errors)
-        lines.append("3. Key Levels")
+        # 3. Volume
+        lines.append("3. Volume")
+        if volume_trend and volume_trend != "unavailable":
+            vol_emoji = {"increasing": "++ (confirming)", "decreasing": "-- (weakening)", 
+                        "spike": "!! (climax/breakout)", "dry": ".. (low interest)"}
+            lines.append(f"   - Trend: {volume_trend.capitalize()} {vol_emoji.get(volume_trend, '')}")
+        else:
+            lines.append("   - Trend: Data unavailable")
+        lines.append("")
+        
+        # 4. Key Levels (use Rs instead of rupee symbol to avoid unicode errors)
+        lines.append("4. Key Levels")
         if support:
             lines.append("   - Support:")
             for s in support:
@@ -494,8 +479,14 @@ Respond ONLY with the JSON object, no additional text.
             lines.append("   - Resistance: None identified")
         lines.append("")
         
-        # 4. Context
-        lines.append("4. Context")
+        # 5. Candlestick Pattern
+        if candlestick_pattern and candlestick_pattern.lower() != "none":
+            lines.append("5. Candlestick Pattern")
+            lines.append(f"   - {candlestick_pattern}")
+            lines.append("")
+        
+        # 6. Context
+        lines.append("6. Context")
         if price and price != "N/A":
             lines.append(f"   - Current Price: Rs {price}")
         
@@ -521,8 +512,8 @@ Respond ONLY with the JSON object, no additional text.
             lines.append(f"   - Technical Setup: {reasoning}")
         lines.append("")
         
-        # 5. Scenario Outlook
-        lines.append("5. Scenario Outlook (No trade instructions)")
+        # 7. Scenario Outlook
+        lines.append("7. Scenario Outlook (No trade instructions)")
         if bias:
             lines.append(f"   - {bias}")
         else:
