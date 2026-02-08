@@ -94,6 +94,11 @@ observation:
 market_analysis:
   enabled: true
   mode: "read_only"  # STRICTLY read-only analysis
+
+# Trading Configuration (Phase-C / Phase-7B)
+# Used by EntryLogicEngine for position sizing and RiskBudgetEngine for risk limits
+account_equity: 1000000.0    # Your trading capital in ₹ (change to your actual equity)
+trading_mode: "SWING"        # "SWING" (multi-day) or "INTRADAY" (same-day)
   
   # TradingView Integration
   tradingview:
